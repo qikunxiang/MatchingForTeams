@@ -1,7 +1,6 @@
 # Feasible approximation of matching equilibria in the matching for teams problem beyond discrete measures
 
 + By Ariel Neufeld and Qikun Xiang
-+ Article link (arXiv): [TBD]
 
 ## Description of files
 
