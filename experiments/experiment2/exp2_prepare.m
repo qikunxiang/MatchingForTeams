@@ -1,5 +1,5 @@
-save_file_path = ['experiments/experiment2/quality2d/' ...
-    'exp2_q2d_inputs_T%02d.mat'];
+save_file_path = ['experiments/experiment2/' ...
+    'exp2_inputs_T%02d.mat'];
 
 % randomly generate 10 problem settings
 randtrial_num = 10;

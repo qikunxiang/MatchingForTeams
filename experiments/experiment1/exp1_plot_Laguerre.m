@@ -10,8 +10,8 @@ plotted_test = 4;
 
 color_map = jet;
 
-figure('Position', [100, 100, 1500, 600]);
-ha = tight_subplot(2, 5, [0.04, 0.01], [0.04, 0.01], [0.01, 0.01]);
+figure('Position', [100, 100, 1000, 400]);
+ha = tight_subplot(2, 5, [0.06, 0.01], [0.06, 0.01], [0.01, 0.01]);
 
 Laguerre_subsample = 1:20:10000;
 edge_color = [0.4, 0.4, 0.4];

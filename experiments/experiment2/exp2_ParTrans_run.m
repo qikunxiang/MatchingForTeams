@@ -1,10 +1,10 @@
-input_file_path = ['experiments/experiment2/quality2d/' ...
-    'exp2_q2d_inputs_T%02d.mat'];
-result_file_path = 'experiments/experiment2/quality2d/%s_T%02d_M%03d.mat';
-file_prefix = 'ParTrans_results/RST_LOG_DLOG';
+input_file_path = ['experiments/experiment2/' ...
+    'exp2_inputs_T%02d.mat'];
+result_file_path = 'experiments/experiment2/%s_T%02d_M%03d.mat';
+file_prefix = 'results/RST_LOG_DLOG';
 
 options = struct;
-options.log_file = 'exp2_q2d_ParTrans_algo.log';
+options.log_file = 'exp2_ParTrans_algo.log';
 options.global_formulation = 'LOG_DLOG';
 options.sanitation_threshold = 1e-8;
 options.time_limit = 86400;
@@ -20,18 +20,18 @@ global_options.BestObjStop = -0.2;
 global_options.PoolSearchMode = 1;
 global_options.PoolSolutions = 30;
 global_options.OutputFlag = 1;
-global_options.LogFile = 'exp2_q2d_gurobi_MIP.log';
+global_options.LogFile = 'exp2_gurobi_MIP.log';
 
 LP_options = struct;
 LP_options.OutputFlag = 1;
 LP_options.LogToConsole = 0;
-LP_options.LogFile = 'exp2_q2d_gurobi_LP.log';
+LP_options.LogFile = 'exp2_gurobi_LP.log';
 
 tolerance = 5e-5;
 MCsamp_num = 1e6;
 MCrep_num = 10;
 
-exp_log_file_path = 'exp2_q2d_ParTrans_outputs.log';
+exp_log_file_path = 'exp2_ParTrans_outputs.log';
 
 test_settings = ...
     [ ...
