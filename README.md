@@ -38,52 +38,32 @@
 
 + All folders and subfolders must be added to the MATLAB search path. 
 + Gurobi optimization (version 9.5.0 or above) must be installed on the machine and relevant files must be added to the search path. 
-+ Since running both Experiment 1 and Experiment 2 will generate around 60GB of data files, one needs to make sure that sufficient disk space is available. 
++ Since running both Experiment 1 and Experiment 2 will generate around 36GB of data files, one needs to make sure that sufficient disk space is available. 
 
 ### Experiment 1
 
 #### Step 1: generate the input file
 + Run **experiments/experiment1/exp1\_prepare.m** to generate a file containing the setting of the matching for teams problem as well as the test functions used in the approximation schemes.
-+ Run **experiments/experiment1/exp1\_plot\_testfuncs.m** to plot the agent type spaces, the type distributions, the quality space, and the test functions (Figure 6.1). 
++ Run **experiments/experiment1/exp1\_plot\_testfuncs.m** to plot the agent type spaces, the type distributions, the quality space, and the test functions. 
 
 #### Step 2: compute optimal couplings
 + Run **experiments/experiment1/exp1\_compute\_OT.m** to generate a file containing the information characterizing optimal couplings between the continuous probability measures and their discrete approximations.
-+ Run **experiments/experiment1/exp1\_plot\_Laguerre.m** to plot the Laguerre diagrams characterizing the computed optimal couplings (Figure 6.2). 
++ Run **experiments/experiment1/exp1\_plot\_Laguerre.m** to plot the Laguerre diagrams characterizing the computed optimal couplings. 
 
-#### Step 3: approximate the matching for teams problem via the multi-marginal optimal transport (MMOT) based approach
-+ Run **experiments/experiment1/exp1\_MMOT\_run.m** to solve the linear semi-infinite programming problem via the cutting-plane algorithm as well as compute the upper bounds via Monte Carlo integration. *Warning: this step will generate around 3.7GB of data files.*
-+ Run **experiments/experiment1/exp1\_MMOT\_plot\_bounds.m** to plot the computed upper and lower bounds, sub-optimality estimates, and their a priori theoretical upper bounds (top panels of Figure 6.3).
-+ Run **experiments/experiment1/exp1\_MMOT\_plot\_couplings.m** and **experiments/experiment1/exp1\_MMOT\_plot\_funcs.m** to plot the computed approximately optimal transfer functions as well as the computed approximately optimal couplings (Figure 6.4).
-
-#### Step 4: approximate the matching for teams problem via the parametric formulation based approach
+#### Step 3: approximate the matching for teams problem via the parametric formulation based approach
 + Run **experiments/experiment1/exp1\_ParTrans\_run.m** to solve the linear semi-infinite programming problem via the cutting-plane algorithm as well as compute the upper bounds via Monte Carlo integration. *Warning: this step will generate around 3.7GB of data files.*
-+ Run **experiments/experiment1/exp1\_ParTrans\_plot\_bounds.m** to plot the computed upper and lower bounds, sub-optimality estimates, and their a priori theoretical upper bounds (bottom panels of Figure 6.3).
-+ Run **experiments/experiment1/exp1\_ParTrans\_plot\_couplings.m** and **experiments/experiment1/exp1\_ParTrans\_plot\_funcs.m** to plot the computed approximately optimal transfer functions as well as the computed approximately optimal couplings (Figure 6.5).
++ Run **experiments/experiment1/exp1\_ParTrans\_plot\_bounds.m** to plot the computed upper and lower bounds, sub-optimality estimates, and their a priori theoretical upper bounds.
++ Run **experiments/experiment1/exp1\_ParTrans\_plot\_couplings.m** and **experiments/experiment1/exp1\_ParTrans\_plot\_funcs.m** to plot the computed approximately optimal transfer functions as well as the computed approximately optimal couplings.
 
-### Experiment 2 (d=2)
-
-#### Step 1: generate the input files
-+ Run **experiments/experiment2/quality2d/exp2\_q2d\_prepare.m** to generate files containing the settings of the matching for teams problems as well as the test functions used in the approximation schemes.
-
-#### Step 2: approximate the matching for teams problems
-+ Run **experiments/experiment2/quality2d/exp2\_q2d\_MMOT\_run.m** to approximate the matching for teams problems via the multi-marginal optimal transport (MMOT) based approach. *Warning: this step will generate around 9.1GB of data files.*
-+ Run **experiments/experiment2/quality2d/exp2\_q2d\_ParTrans\_run.m** to approximate the matching for teams problems via the parametric formulation based approach. *Warning: this step will generate around 32.2GB of data files.*
-
-#### Step 3: visualize the results
-+ Run **experiments/experiment2/quality2d/exp2\_q2d\_process\_results.m** to compile all results into a single data file.
-+ Run **experiments/experiment2/quality2d/exp2\_q2d\_print\_results.m** to print a table containing the computed sub-optimality estimates and running time of both approaches (Table 6.1) and a table containing the sparsity of the support of the computed approximately optimal solutions (Table 6.2). 
-+ Run **experiments/experiment2/quality2d/exp2\_q2d\_plot\_time.m** to plot the running time of the linear programming solver and the global minimization oracles of both approaches (Figure 6.6).
-
-
-### Experiment 2 (d=10)
+### Experiment 2
 
 #### Step 1: generate the input files
-+ Run **experiments/experiment2/quality10d/exp2\_q10d\_prepare.m** to generate files containing the settings of the matching for teams problems as well as the test functions used in the approximation schemes.
++ Run **experiments/experiment2/exp2\_prepare.m** to generate files containing the settings of the matching for teams problems as well as the test functions used in the approximation schemes.
 
 #### Step 2: approximate the matching for teams problems
-+ Run **experiments/experiment2/quality10d/exp2\_q10d\_MMOT\_run.m** to approximate the matching for teams problems via the multi-marginal optimal transport (MMOT) based approach. *Warning: this step will generate around XGB of data files.*
++ Run **experiments/experiment2/exp2\_ParTrans\_run.m** to approximate the matching for teams problems via the parametric formulation based approach. *Warning: this step will generate around 32.2GB of data files.*
 
 #### Step 3: visualize the results
-+ Run **experiments/experiment2/quality10d/exp2\_q10d\_process\_results.m** to compile all results into a single data file.
-+ Run **experiments/experiment2/quality10d/exp2\_q10d\_print\_results.m** to print a table containing the computed sub-optimality estimates, running time, and the sparsity of the support of the computed approximately optimal solutions (Table 6.3). 
-+ Run **experiments/experiment2/quality10d/exp2\_q10d\_plot\_time.m** to plot the running time of the linear programming solver and the global minimization oracles (Figure 6.7).
++ Run **experiments/experiment2/exp2\_process\_results.m** to compile all results into a single data file.
++ Run **experiments/experiment2/exp2\_print\_results.m** to print a table containing the computed sub-optimality estimates, the running time, and the sparsity of support. 
++ Run **experiments/experiment2/exp2\_plot\_time.m** to plot the running time of the linear programming solver and the global minimization oracle.
