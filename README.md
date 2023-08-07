@@ -1,4 +1,4 @@
-# Feasible approximation of matching equilibria in the matching for teams problem beyond discrete measures
+# Feasible approximation of matching equilibria for large-scale matching for teams problems
 
 + By Ariel Neufeld and Qikun Xiang
 + Article link (arXiv): [TBD]
