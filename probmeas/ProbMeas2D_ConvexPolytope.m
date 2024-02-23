@@ -251,6 +251,13 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
             end
         end
 
+        function clearPreparation(obj)
+            % Clear the temporary data used for computing the semi-discrete
+            % optimal transport
+
+            obj.OT = rmfield(obj.OT, 'Prep');
+        end
+
         function info = saveOptimalTransportInfo(obj)
             % Save optimal transport related information in a struct that
             % can be used later
@@ -260,7 +267,6 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
             info = struct;
             info.atoms = obj.OT.DiscMeas.Atoms;
             info.probs = obj.OT.DiscMeas.Probs;
-            info.angle_list = obj.OT.Prep.angle_list;
             info.weights = obj.OT.Weights;
             info.cost = obj.OT.Cost;
             info.condrejsamp = obj.OT.CondRejSamp;
@@ -272,9 +278,8 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
             % Input:
             %   info: struct that will be copied to the fields of obj.OT
 
-            obj.prepareOptimalTransport(info.atoms, info.probs, ...
-                info.angle_list);
-
+            obj.OT.DiscMeas = struct('Atoms', info.atoms, ...
+                'Probs', info.probs);
             obj.OT.Weights = info.weights;
             obj.OT.Cost = info.cost;
             obj.OT.CondRejSamp = info.condrejsamp;

@@ -6,7 +6,6 @@ load(CONFIG.SAVEPATH_INPUTS);
 load(CONFIG.SAVEPATH_OUTPUTS);
 
 xx = 1:test_num;
-xx = 1:6;
 
 MT_UB1_err = zeros(test_num, 2);
 MT_UB2_err = zeros(test_num, 2);
