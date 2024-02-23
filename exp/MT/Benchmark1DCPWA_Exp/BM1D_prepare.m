@@ -1,5 +1,7 @@
-save_file_path = ['experiments/experiment2/' ...
-    'exp2_inputs_T%02d.mat'];
+% Example benchmarking the running time of the proposed algorithm with 1D
+% marginals and continuous piece-wise affine cost functions
+
+CONFIG = BM1D_config();
 
 % randomly generate 10 problem settings
 randtrial_num = 10;
@@ -85,7 +87,7 @@ for trial_id = 1:randtrial_num
             'knots', cf_knots, 'values', cf_vals);
     end
     
-    save(sprintf(save_file_path, trial_id), ...
+    save(sprintf(CONFIG.SAVEPATH_INPUTS, trial_id), ...
         'marg_knots_cell', 'marg_dens_cell', ...
         'costfunc_cell', 'testfuncs_cell', ...
         'quality', 'quality_vertices', 'quality_testfuncs');

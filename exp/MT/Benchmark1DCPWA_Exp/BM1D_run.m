@@ -1,13 +1,10 @@
-input_file_path = ['experiments/experiment2/' ...
-    'exp2_inputs_T%02d.mat'];
-result_file_path = 'experiments/experiment2/%s_T%02d_M%03d.mat';
-file_prefix = 'results/RST_LOG_DLOG';
+CONFIG = BM1D_config();
 
 options = struct;
-options.log_file = 'exp2_ParTrans_algo.log';
+options.log_file = CONFIG.LOGPATH_LSIP_MAIN;
 options.global_formulation = 'LOG_DLOG';
 options.sanitation_threshold = 1e-8;
-options.time_limit = 86400;
+options.time_limit = 60000;
 options.display = true;
 options.reduce = struct;
 options.reduce.thres = 0.01;
@@ -15,23 +12,23 @@ options.reduce.max_iter = 3000;
 options.reduce.freq = 50;
 
 global_options = struct;
-global_options.TimeLimit = 86400;
+global_options.TimeLimit = 60000;
 global_options.BestObjStop = -0.2;
 global_options.PoolSearchMode = 1;
 global_options.PoolSolutions = 30;
 global_options.OutputFlag = 1;
-global_options.LogFile = 'exp2_gurobi_MIP.log';
+global_options.LogFile = CONFIG.LOGPATH_LSIP_GLOBAL;
 
 LP_options = struct;
 LP_options.OutputFlag = 1;
 LP_options.LogToConsole = 0;
-LP_options.LogFile = 'exp2_gurobi_LP.log';
+LP_options.LogFile = CONFIG.LOGPATH_LSIP_LP;
 
 tolerance = 5e-5;
 MCsamp_num = 1e6;
 MCrep_num = 10;
 
-exp_log_file_path = 'exp2_ParTrans_outputs.log';
+exp_log_file_path = CONFIG.LOGPATH_MAIN;
 
 test_settings = ...
     [ ...
@@ -162,9 +159,9 @@ for st_id = 1:size(test_settings, 1)
     trial_id = test_settings(st_id, 1);
     marg_num = test_settings(st_id, 2);
 
-    rng(50000 + trial_id * 1000 + marg_num, 'combRecursive');
+    rng(10000 + trial_id * 1000 + marg_num, 'combRecursive');
 
-    load(sprintf(input_file_path, trial_id));
+    load(sprintf(CONFIG.SAVEPATH_INPUTS, trial_id));
 
     exp_log_file = fopen(exp_log_file_path, 'a');
 
@@ -252,8 +249,8 @@ for st_id = 1:size(test_settings, 1)
         marg_num, total_time, MT_LB, MT_UB_mean, MT_diff_mean, ...
         MT_OTEB, MT_THEB);
 
-    save(sprintf(result_file_path, ...
-        file_prefix, trial_id, marg_num), ...
+    save(sprintf(CONFIG.SAVEPATH_OUTPUTS, ...
+        trial_id, marg_num), ...
         'output', 'total_time', ...
         'MCsamps', 'LSIP_primal', 'LSIP_dual', ...
         'LSIP_UB', 'LSIP_LB', ...

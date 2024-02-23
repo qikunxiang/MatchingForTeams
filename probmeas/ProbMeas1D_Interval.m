@@ -2,6 +2,11 @@ classdef (Abstract) ProbMeas1D_Interval < handle
     % Abstract class for probability measures supported on a
     % one-dimensional interval
     
+    properties(Constant)
+        % numerical tolerance for deciding if a point is inside an interval
+        INSIDE_TOLERANCE = 1e-14;
+    end
+
     properties(SetAccess = protected, GetAccess = public)
         % struct storing information about the support of the probability
         % measure
@@ -43,8 +48,10 @@ classdef (Abstract) ProbMeas1D_Interval < handle
             %   inside: boolean vector indicating whether each point is
             %   inside the support
 
-            inside = pts >= obj.Supp.LowerBound - 1e-14 ...
-                & pts <= obj.Supp.UpperBound + 1e-14;
+            inside = pts >= obj.Supp.LowerBound ...
+                - ProbMeas1D_Interval.INSIDE_TOLERANCE ...
+                & pts <= obj.Supp.UpperBound ...
+                + ProbMeas1D_Interval.INSIDE_TOLERANCE;
         end
 
         function setCoupledDiscreteMeasure(obj, atoms, probs)
@@ -321,7 +328,8 @@ classdef (Abstract) ProbMeas1D_Interval < handle
             input_num = length(pts);
 
             % compute the sub-intervals the inputs are in
-            int_indices = min(sum(pts - knots' >= -1e-14, 2), ...
+            int_indices = min(sum(pts - knots' >= ...
+                -ProbMeas1D_Interval.INSIDE_TOLERANCE, 2), ...
                 knot_num - 1);
             
             % compute the test function corresponding to the left end point

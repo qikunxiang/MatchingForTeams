@@ -1,18 +1,17 @@
-result_file_path = ['experiments/experiment2/' ...
-    'exp2_results.mat'];
+CONFIG = BM1D_config();
 
-load(result_file_path);
+load(CONFIG.SAVEPATH_SUMMARY);
 
-ParTrans_LP_time = mean(ParTrans.LPTIME, 2, 'includemissing');
-ParTrans_GL_time = mean(ParTrans.GLTIME, 2, 'includemissing');
+LP_time = mean(RST.LPTIME, 2, 'includemissing');
+GL_time = mean(RST.GLTIME, 2, 'includemissing');
 
 figure('Position', [100, 100, 500, 300]);
 ha = tight_subplot(1, 1, [0, 0], [0.105, 0.055], [0.065, 0.02]);
 axes(ha);
 hold on;
-plp = plot(marg_list, ParTrans_LP_time, ':^', 'Color', 'blue', ...
+plp = plot(marg_list, LP_time, ':^', 'Color', 'blue', ...
     'MarkerSize', 4);
-pgl = plot(marg_list, ParTrans_GL_time, '--o', 'Color', 'red', ...
+pgl = plot(marg_list, GL_time, '--o', 'Color', 'red', ...
     'MarkerSize', 4);
 
 box on;

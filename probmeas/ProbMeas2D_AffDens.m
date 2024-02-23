@@ -1,4 +1,5 @@
-classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
+classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope ...
+        & HasTractableQuadraticIntegrals
     % Class for probability measures with affine density function supported
     % on a convex polytope
 
@@ -34,21 +35,36 @@ classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
             % divide the convex polytope into triangles via Delaunay
             % triangulation
             DT = delaunay(vertices);
+            tri_num = size(DT, 1);
 
             % evaluate the integral of the unnormalized density within each
             % triangular region via an affine transformation which places
             % the vertices on (0, 0), (1, 0), and (0, 1)
-            tri_integral = zeros(size(DT, 1), 1);
-            for tri_id = 1:size(DT, 1)
-                tri_vert = vertices(DT(tri_id, :), :);
-                trans_shift = tri_vert(1, :)';
-                trans_mat = tri_vert(2:3, :)' - trans_shift;
-                trans_weight = dens_weight' * trans_mat;
-                trans_intercept = dens_weight' * trans_shift ...
-                    + dens_intercept;
+            tri_integral = zeros(tri_num, 1);
 
-                tri_integral(tri_id) = (sum(trans_weight) / 6 ...
-                    + trans_intercept / 2) * abs(det(trans_mat));
+            % evaluate the integrals of x1, x2, x1^2, x2^2, and x1*x2 with 
+            % respect to the mixture of bivariate Gaussian measure within 
+            % each triangular region
+            tri_lin_integral_x1 = zeros(tri_num, 1);
+            tri_lin_integral_x2 = zeros(tri_num, 1);
+            tri_quad_integral_x1sq = zeros(tri_num, 1);
+            tri_quad_integral_x2sq = zeros(tri_num, 1);
+            tri_quad_integral_x1x2 = zeros(tri_num, 1);
+
+            for tri_id = 1:tri_num
+                tri_verts = vertices(DT(tri_id, :), :);
+                dens_vertices = tri_verts * dens_weight + dens_intercept;
+                
+                int_vals = ...
+                        ProbMeas2D_AffDens.affineIntegralTriangle( ...
+                        dens_vertices, tri_verts', eye(6), false(6, 1));
+
+                tri_integral(tri_id) = int_vals(6);
+                tri_lin_integral_x1(tri_id) = int_vals(4);
+                tri_lin_integral_x2(tri_id) = int_vals(5);
+                tri_quad_integral_x1sq(tri_id) = int_vals(1);
+                tri_quad_integral_x2sq(tri_id) = int_vals(2);
+                tri_quad_integral_x1x2(tri_id) = int_vals(3);
             end
 
             % calculate the normalizing constant and normalize the density
@@ -57,10 +73,18 @@ classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
                 'Intercept', dens_intercept / norm_const, ...
                 'NormConst', norm_const);
 
-            % density function with the support
-            obj.Dens.Func = @(z)(all(z * obj.Supp.Hyperplane.w' ...
-                <= obj.Supp.Hyperplane.b', 2) ...
-                .* (z * obj.Dens.Weight + obj.Dens.Intercept));
+            % calculate the expected value of x1, x2, x1^2, x2^2, x1*x2
+            obj.FirstMomentVec = zeros(2, 1);
+            obj.FirstMomentVec(1) = sum(tri_lin_integral_x1) / norm_const;
+            obj.FirstMomentVec(2) = sum(tri_lin_integral_x2) / norm_const;
+            obj.SecondMomentMat = zeros(2, 2);
+            obj.SecondMomentMat(1, 1) = ...
+                sum(tri_quad_integral_x1sq) / norm_const;
+            obj.SecondMomentMat(2, 2) = ...
+                sum(tri_quad_integral_x2sq) / norm_const;
+            obj.SecondMomentMat(1, 2) = ...
+                sum(tri_quad_integral_x1x2) / norm_const;
+            obj.SecondMomentMat(2, 1) = obj.SecondMomentMat(1, 2);
 
             % prepare information needed for rejection sampling
             obj.RejSamp = struct;
@@ -74,11 +98,116 @@ classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
                 .* vertices, 2)) + obj.Dens.Intercept) ...
                 * (obj.RejSamp.Range.x(2) - obj.RejSamp.Range.x(1)) ...
                 * (obj.RejSamp.Range.y(2) - obj.RejSamp.Range.y(1));
-            obj.RejSamp.AcceptProbFunc = @(raw_samps)( ...
-                obj.Dens.Func(raw_samps) ...
-                    / (obj.RejSamp.Multiplier ...
-                    / (diff(obj.RejSamp.Range.x) ...
-                    * diff(obj.RejSamp.Range.y))));
+        end
+
+        function dens = densityFunction(obj, pts)
+            % Probability density function
+            % Input:
+            %   pts: two-column matrix containing the input points
+            % Output:
+            %   dens: the computed density values
+
+            dens = all(pts * obj.Supp.Hyperplane.w' ...
+                <= obj.Supp.Hyperplane.b', 2) ...
+                .* (pts * obj.Dens.Weight + obj.Dens.Intercept);
+        end
+
+        function pts_san = sanitizePoints(obj, pts, tolerance)
+            % Fix small numerical inaccuracies in the points such that
+            % points that are slightly outside the support are moved into
+            % the support
+            % Inputs: 
+            %   pts: two-column matrix containing the input points
+            %   tolerance: numerical tolerance values for constraint
+            %   violations (default is 1e-6)
+            % Output:
+            %   pts_san: two-column matrix containing the sanitized points
+
+            if ~exist('tolerance', 'var') || isempty(tolerance)
+                tolerance = 1e-6;
+            end
+
+            % partition the support into triangles
+            supp_verts = obj.Supp.Vertices;
+            supp_tri = delaunay(supp_verts);
+
+            tri_num = size(supp_tri, 1);
+
+            % calculate inequalities representing half-spaces bounding each
+            % triangle
+            ineq_w_cell = cell(tri_num, 1);
+            ineq_b_cell = cell(tri_num, 1);
+
+            for tri_id = 1:tri_num
+                tri_verts = supp_tri(tri_id, :)';
+                tri_vert_mat = supp_verts(tri_verts, :);
+
+                % sort the three vertices counterclockwise
+                ccorder = convhull(tri_vert_mat(:, 1), ...
+                    tri_vert_mat(:, 2), 'Simplify', true);
+
+                % there are now 4 rows, the first and the last are
+                % identical
+                tri_vert_cc = tri_vert_mat(ccorder, :);
+
+                tri_vert1 = tri_vert_cc(1:3, :);
+                tri_vert2 = tri_vert_cc(2:4, :);
+
+                ineq_w_cell{tri_id} = ...
+                    [tri_vert2(:, 2) - tri_vert1(:, 2), ...
+                     tri_vert1(:, 1) - tri_vert2(:, 1)];
+                ineq_b_cell{tri_id} = ...
+                    tri_vert2(:, 2) .* tri_vert1(:, 1) ...
+                    - tri_vert1(:, 2) .* tri_vert2(:, 1);
+
+                % correct numerical inaccuracies and make sure that the
+                % vertices themselves are contained in the triangular
+                % region
+                ineq_b_cell{tri_id} = max(ineq_b_cell{tri_id}, ...
+                    max(ineq_w_cell{tri_id} * tri_vert1', [], 2));
+            end
+            
+            ineq_w = vertcat(ineq_w_cell{:});
+            ineq_b = vertcat(ineq_b_cell{:});
+
+            input_num = size(pts, 1);
+            constr_vio = ineq_w * pts' - ineq_b;
+
+            vio_mat = reshape(max(reshape(constr_vio(:), ...
+                3, tri_num * input_num), [], 1)', ...
+                tri_num, input_num)';
+
+            if max(min(vio_mat, [], 2)) > tolerance
+                error('constraint violations exceed the tolerance');
+            end
+
+            pts_san = pts;
+
+            for input_id = 1:input_num
+                % find the triangle that the point is closest to
+                [min_vio, min_id] = min(vio_mat(input_id, :));
+
+                if min_vio <= 0
+                    continue;
+                end
+
+                pt = pts(input_id, :)';
+                tri = supp_tri(min_id, :);
+                tri_verts = supp_verts(tri, :);
+
+                % represent the point as a convex combination of the
+                % vertices of the triangle
+                coefs = [tri_verts'; ones(1, 3)] \ [pt; 1];
+
+                % make all the coefficients positive
+                coefs = max(coefs, 1e-6);
+
+                % normalize the coefficients to sum to 1
+                coefs = coefs / sum(coefs);
+
+                % update the point
+                pts_san(input_id, :) = tri_verts' * coefs;
+            end
         end
     end
 
@@ -93,7 +222,8 @@ classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
             %   inside the support
 
             inside = all(pts * obj.Supp.Hyperplane.w' ...
-                - obj.Supp.Hyperplane.b' <= 1e-14, 2);
+                - obj.Supp.Hyperplane.b' <= ...
+                ProbMeas2D_ConvexPolytope.INSIDE_TOLERANCE, 2);
         end
 
         function raw_samps = sampleFromProposalDistribution(obj, ...
@@ -104,6 +234,9 @@ classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
             % Inputs:
             %   samp_num: number of samples to generate
             %   rand_stream: RandStream object used for sampling
+            % Output:
+            %   raw_samps: two-column matrix containing the generated raw
+            %   samples (before the rejection step)
 
             width_x = diff(obj.RejSamp.Range.x);
             width_y = diff(obj.RejSamp.Range.y);
@@ -113,7 +246,24 @@ classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
                 + [obj.RejSamp.Range.x(1), obj.RejSamp.Range.y(1)];
         end
 
-        function prepareOptimalTransport(obj, atoms, probs, angle_num)
+        function accept_probs = rejSampAcceptProbFunction(obj, raw_samps)
+            % Computes the acceptance probability when using rejection 
+            % sampling to generate independent samples from the probability
+            % measure
+            % Input:
+            %   raw_samps: two-column matrix containing the raw samples
+            %   generated from the proposal distribution before rejection
+            % Output:
+            %   accept_probs: vector containing the computed acceptance
+            %   probability
+
+            accept_probs = obj.densityFunction(raw_samps) ...
+                    / (obj.RejSamp.Multiplier ...
+                    / (diff(obj.RejSamp.Range.x) ...
+                    * diff(obj.RejSamp.Range.y)));
+        end
+
+        function prepareOptimalTransport(obj, atoms, probs, angle_list)
             % Prepare quantities for the computation of semi-discrete
             % optimal transport.
             % Inputs:
@@ -121,10 +271,11 @@ classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
             %   atoms in the discrete measure
             %   probs: vector containing the probabilities of the atoms in
             %   the discrete measure
-            %   angle_num: number of angles used in the integration
+            %   angle_list: vector containing angles used in the 
+            %   integration
 
             prepareOptimalTransport@ProbMeas2D_ConvexPolytope(obj, ...
-                atoms, probs, angle_num);
+                atoms, probs, angle_list);
 
             angle_list = obj.OT.Prep.angle_list;
 
@@ -140,7 +291,7 @@ classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
         end
 
         function [val1, val2] = computeInnerIntegral(obj, ...
-                atom_id, upper_limits)
+                atom_id, angle_indices, upper_limits)
             % Evaluates inner integrals along a list of angles in the polar
             % coordinate system. The integrands are r -> r * p(r) and 
             % r -> r^2 * p(r) where p(r) denotes the probability density
@@ -148,50 +299,51 @@ classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
             % Inputs:
             %   atom_id: the index of the atom (which is treated as the
             %   origin)
+            %   angle_indices: vector indicating the indices of the
+            %   pre-specified angles where the inner integral is evaluated
             %   upper_limits: the upper integral limits specified in a
             %   vector (the lower integral limits is always 0)
             % Outputs:
             %   val1: the integral of r -> r * p(r)
             %   val2: the integral of r -> r^2 * p(r)
 
+            coef = obj.OT.Prep.radial.coefficient(angle_indices);
+
             upper_limits_p2 = upper_limits .^ 2;
             upper_limits_p3 = upper_limits .^ 3;
             upper_limits_p4 = upper_limits .^ 4;
 
-            val1 = obj.OT.Prep.radial.coefficient / 3 ...
-                .* upper_limits_p3 ...
+            val1 = coef / 3 .* upper_limits_p3 ...
                 + obj.OT.Prep.radial.intercept(atom_id) / 2 ...
                 * upper_limits_p2;
-            val2 = obj.OT.Prep.radial.coefficient / 4 ...
-                .* upper_limits_p4 ...
+            val2 = coef / 4 .* upper_limits_p4 ...
                 + obj.OT.Prep.radial.intercept(atom_id) / 3 ...
                 * upper_limits_p3;
         end
 
-        function postProcessOptimalTransport(obj)
+        function postProcessOptimalTransport(obj, pp_angle_indices)
             % Post-processing after computing semi-discrete optimal
             % transport including computing the contour of each cell in the
             % Laguerre diagram and preparing for conditional rejection
             % sampling
+            % Input:
+            %   pp_angle_indices: indices of the angles used in
+            %   post-processing (default is all indices)
 
             atom_num = size(obj.OT.DiscMeas.Atoms, 1);
-            angle_num = length(obj.OT.Prep.angle_list);
-
-            obj.OT.Laguerre = struct;
 
             % cell array containing information about rejection sampling
             % from the conditional distributions (conditional on each atom)
             obj.OT.CondRejSamp = cell(atom_num, 1);
 
-            rho = zeros(angle_num, atom_num);
-
             hyp_a = (obj.OT.Weights - obj.OT.Weights') / 2;
 
+            angle_samp = obj.OT.Prep.angle_list(pp_angle_indices);
+
             for atom_id = 1:atom_num
-                [rho(:, atom_id), hyp_full] ...
+                [rho_i, hyp_full] ...
                     = hyperbolic_Dirichlet_tessellation_polar( ...
-                    obj.OT.Prep.angle_list, ...
-                    hyp_a(:, atom_id), ...
+                    angle_samp, hyp_a(:, atom_id), ...
                     obj.OT.Prep.hyp.c(:, atom_id), ...
                     obj.OT.Prep.hyp.intercept(:, atom_id), ...
                     obj.OT.Prep.lin{atom_id}.c, ...
@@ -202,7 +354,6 @@ classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
 
                 % add 10% of the standard deviation to make sure that the
                 % circle covers the whole region
-                rho_i = rho(:, atom_id);
                 std_rho = std(rho_i);
                 radius = max(rho_i) + std_rho * 0.1;
 
@@ -212,23 +363,15 @@ classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
                 
                 % conservative estimate of the maximum density in the cell
                 % in each direction
-                max_density = max(max(obj.OT.Prep.radial.coefficient, ...
-                    0) .* rho_i + obj.OT.Prep.radial.intercept( ...
-                    atom_id)) * 1.01 / obj.OT.DiscMeas.Probs(atom_id);
+                max_density = max(max(obj.OT.Prep.radial.coefficient( ...
+                    pp_angle_indices), 0) .* rho_i ...
+                    + obj.OT.Prep.radial.intercept(atom_id)) * 1.01 ...
+                    / obj.OT.DiscMeas.Probs(atom_id);
 
                 obj.OT.CondRejSamp{atom_id}.MaxDensity = max_density;
                 obj.OT.CondRejSamp{atom_id}.Multiplier = max_density ...
                     * pi * radius ^ 2;
-                obj.OT.CondRejSamp{atom_id}.AcceptProbFunc = ...
-                    @(raw_samps)(obj.computeCondAcceptProb(atom_id, ...
-                    raw_samps));
             end
-
-            obj.OT.Laguerre.rho = rho;
-            obj.OT.Laguerre.x = obj.OT.DiscMeas.Atoms(:, 1)' ...
-                + rho .* cos(obj.OT.Prep.angle_list);
-            obj.OT.Laguerre.y = obj.OT.DiscMeas.Atoms(:, 2)' ...
-                + rho .* sin(obj.OT.Prep.angle_list);
         end
 
         function raw_samps = sampleFromCondProposalDistribution(obj, ...
@@ -252,7 +395,7 @@ classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
                 + dists_from_center .* [cos(angles), sin(angles)];
         end
 
-        function accept_probs = computeCondAcceptProb(obj, ...
+        function accept_probs = condRejSampAcceptProbFunction(obj, ...
                 atom_id, raw_samps)
             % Compute the acceptance probability in conditional rejection
             % sampling from a cell
@@ -265,7 +408,7 @@ classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
             %   accept_probs: vector containing the computed acceptance
             %   probabilities
 
-            raw_density = obj.Dens.Func(raw_samps);
+            raw_density = obj.densityFunction(raw_samps);
             
             condrejsamp = obj.OT.CondRejSamp{atom_id};
             
@@ -386,6 +529,85 @@ classdef ProbMeas2D_AffDens < ProbMeas2D_ConvexPolytope
 
             obj.SimplicialTestFuncs.InvTransMat ...
                 = vertcat(invtrans_cell{:});
+        end
+    end
+
+    methods(Static, Access = public)
+        function vals = affineIntegralTriangle(dens_vertices, ...
+                z_mat, polynomial_coefs, after_transform)
+            % Integrate bivariate second-order polynomials inside a
+            % triangle over a measure with positive affine density
+            % Inputs:
+            %   dens_vertices: the affine density function evaluated at the
+            %   three vertices of the triangle
+            %   z_mat: 2-by-3 matrix containing the three vertices of the
+            %   triangle as columns
+            %   polynomial_coefs: matrix with six rows where each column
+            %   represents a polynomial integrand and each row represents a
+            %   coefficient in the polynomial: c1 * x1^2 + c2 * x2^2 
+            %   + c3 * x1 * x2 + c4 * x1 + c5 * x2 + c6
+            %   after_transform: logical vector indicating whether the
+            %   coefficients of each polynomial is applicable to the
+            %   variables before transformation or after transforming to
+            %   the triangle with vertices [0; 0], [1; 0], and [1; 1]
+            % Output: 
+            %   vals: vector containing the values of the integrals; each
+            %   entry corresponds to a polynomial
+
+            % compute the affine transformation that will transform the
+            % triangle formed by the columns of z_mat to the triangled with
+            % vertices [0; 0], [1; 0], and [1; 1]
+            trans_all = [0, 1, 1; 0, 0, 1] / [z_mat; ones(1, 3)];
+            trans_mat = trans_all(:, 1:2);
+            trans_shift = trans_all(:, 3);
+            trans_mat_inv = inv(trans_mat);
+
+            vals = zeros(size(polynomial_coefs, 2), 1);
+
+            for poly_id = 1:size(polynomial_coefs, 2)
+                if ~after_transform(poly_id)
+                    % if the coefficients apply to the variables before
+                    % transformation, we need to compute the coefficients
+                    % after transformation
+                    coefs = polynomial_coefs(:, poly_id);
+                    coefs_mat = [coefs(1), coefs(3)/2; ...
+                        coefs(3)/2, coefs(2)];
+                    coefs_vec = coefs(4:5);
+                    coefs_const = coefs(6);
+
+                    tcoefs_mat = trans_mat_inv' * coefs_mat ...
+                        * trans_mat_inv;
+                    tcoefs_vec = trans_mat_inv' * coefs_vec ...
+                        - 2 * tcoefs_mat * trans_shift;
+                    tcoefs_const = trans_shift' * tcoefs_mat ...
+                        * trans_shift ...
+                        - coefs_vec' * trans_mat_inv ...
+                        * trans_shift + coefs_const; %#ok<MINV>
+                    coefs = [tcoefs_mat(1, 1); tcoefs_mat(2, 2); ...
+                        2 * tcoefs_mat(1, 2); tcoefs_vec; tcoefs_const];
+                else
+                    % otherwise, we can directly integrate over the
+                    % polynomial with the given coefficients
+                    coefs = polynomial_coefs(:, poly_id);
+                end
+
+                p1 = dens_vertices(1);
+                d21 = dens_vertices(2) - dens_vertices(1);
+                d32 = dens_vertices(3) - dens_vertices(2);
+                vals(poly_id) = ...
+                    ((coefs(1) * d21 ...
+                    + (coefs(1) * d32 + coefs(3) * d21) / 2 ...
+                    + (coefs(3) * d32 + coefs(2) * d21) / 3 ...
+                    + (coefs(2) * d32) / 4) / 5 ...
+                    + ((coefs(1) * p1 + coefs(4) * d21) ...
+                    + (coefs(3) * p1 + coefs(4) * d32 ...
+                    + coefs(5) * d21) / 2 ...
+                    + (coefs(2) * p1 + coefs(5) * d32) / 3) / 4 ...
+                    + ((coefs(4) * p1 + coefs(6) * d21) ...
+                    + (coefs(5) * p1 + coefs(6) * d32) / 2) / 3 ...
+                    + (coefs(6) * p1) / 2) ...
+                    / abs(det(trans_mat));
+            end
         end
     end
 end

@@ -248,9 +248,9 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
 
                 % display output
                 if obj.Options.display
-                    fprintf(['LSIP_CuttingPlane: ' ...
+                    fprintf(['%s: ' ...
                         'iteration %4d: LB = %10.4f, UB = %10.4f, ' ...
-                        'UB - LB = %10.6f\n'], ...
+                        'UB - LB = %10.6f\n'], class(obj), ...
                         obj.Runtime.iter, ...
                         obj.Runtime.LSIP_LB, ...
                         obj.Runtime.LSIP_UB, ...
@@ -259,9 +259,9 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
 
                 % write log
                 if ~isempty(obj.Options.log_file)
-                    fprintf(log_file, ['LSIP_CuttingPlane: ' ...
+                    fprintf(log_file, ['%s: ' ...
                         'iteration %4d: LB = %10.4f, UB = %10.4f, ' ...
-                        'UB - LB = %10.6f\n'], ...
+                        'UB - LB = %10.6f\n'], class(obj), ...
                         obj.Runtime.iter, ...
                         obj.Runtime.LSIP_LB, ...
                         obj.Runtime.LSIP_UB, ...
@@ -300,8 +300,8 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
                     warning('LSIP time limit exceeded');
 
                     if ~isempty(obj.Options.log_file)
-                        fprintf(log_file, ['LSIP_CuttingPlane: ' ...
-                            'LSIP time limit exceeded\n']);
+                        fprintf(log_file, ['%s: ' ...
+                            'LSIP time limit exceeded\n'], class(obj));
                     end
 
                     time_limit_exceeded = true;
@@ -374,18 +374,6 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
             
             obj.Runtime.LSIP_LB = result.objval;
         end
-
-        function updateLSIPUB(obj, min_lb, optimizers) %#ok<INUSD> 
-            % Update the LSIP upper bound after each call to the global
-            % minimization oracle
-            % Inputs:
-            %   min_lb: the lower bound for the global minimization problem
-            %   optimizers: a set of approximate optimizers of the global
-            %   minimization problem
-
-            obj.Runtime.LSIP_UB = min(obj.Runtime.LSIP_UB, ...
-                obj.Runtime.LSIP_LB - min_lb);
-        end
     end
 
     methods(Abstract, Access = protected)
@@ -407,6 +395,10 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
 
         % Remove some of the constraints to speed up the LP solver
         reduceConstraints(obj, result);
+
+        % Update the LSIP upper bound after each call to the global
+        % minimization oracle
+        updateLSIPUB(obj, min_lb, optimizers);
 
         % Given the output from gurobi and a lower bound for the optimal
         % value of the global minimization oracle, build the corresponding

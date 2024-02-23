@@ -4,6 +4,12 @@ classdef (Abstract) MT1DCPWA < LSIPMinCuttingPlaneAlgo
     % that have the form c_i(x_i, z) = l_i(x_i - s' * z), where l_i is a
     % continuous piece-wise affine (CPWA) function
 
+    properties(Constant)
+        % numerical tolerance for deciding whether a point is inside a
+        % polytope
+        INSIDE_TOLERANCE = 1e-12;
+    end
+
     properties(GetAccess = public, SetAccess = protected)
         % cell array containing the marginals
         Marginals;
@@ -519,16 +525,16 @@ classdef (Abstract) MT1DCPWA < LSIPMinCuttingPlaneAlgo
 
                 % display output
                 if obj.Options.display
-                    fprintf(['MT1DCPWA: ' ...
+                    fprintf(['%s: ' ...
                         'Monte Carlo sampling (discrete measure) ' ...
-                        'repetition %3d done\n'], rep_id);
+                        'repetition %3d done\n'], class(obj), rep_id);
                 end
 
                 % write log
                 if ~isempty(obj.Options.log_file)
-                    fprintf(log_file, ['MT1DCPWA: ' ...
+                    fprintf(log_file, ['%s: ' ...
                         'Monte Carlo sampling (discrete measure) ' ...
-                        'repetition %3d done\n'], rep_id);
+                        'repetition %3d done\n'], class(obj), rep_id);
                 end
             end
 
@@ -596,16 +602,16 @@ classdef (Abstract) MT1DCPWA < LSIPMinCuttingPlaneAlgo
 
                 % display output
                 if obj.Options.display
-                    fprintf(['MT1DCPWA: ' ...
+                    fprintf(['%s: ' ...
                         'Monte Carlo sampling repetition %3d done\n'], ...
-                        rep_id);
+                        class(obj), rep_id);
                 end
 
                 % write log
                 if ~isempty(obj.Options.log_file)
-                    fprintf(log_file, ['MT1DCPWA: ' ...
+                    fprintf(log_file, ['%s: ' ...
                         'Monte Carlo sampling repetition %3d done\n'], ...
-                        rep_id);
+                        class(obj), rep_id);
                 end
             end
 
@@ -702,11 +708,10 @@ classdef (Abstract) MT1DCPWA < LSIPMinCuttingPlaneAlgo
             %   points is inside the quality space
 
             check_model = obj.Quality.GurobiModel;
-            tol = 1e-14;
             lb_list = all(pts >= check_model.lb(1:obj.Quality.Dim)' ...
-                - tol, 2);
+                - MT1DCPWA.INSIDE_TOLERANCE, 2);
             ub_list = all(pts <= check_model.ub(1:obj.Quality.Dim)' ...
-                + tol, 2);
+                + MT1DCPWA.INSIDE_TOLERANCE, 2);
 
             if obj.Quality.AuxVarNum == 0
                 % if the quality space is characterized by inequality and
@@ -716,9 +721,9 @@ classdef (Abstract) MT1DCPWA < LSIPMinCuttingPlaneAlgo
                 constr_diff =  pts * check_model.A' - check_model.rhs';
 
                 ineq_list = all(constr_diff(:, check_model.sense ...
-                    == '<') <= tol, 2);
+                    == '<') <= MT1DCPWA.INSIDE_TOLERANCE, 2);
                 eq_list = all(abs(constr_diff(:, check_model.sense ...
-                    == '=')) <= tol, 2);
+                    == '=')) <= MT1DCPWA.INSIDE_TOLERANCE, 2);
 
                 inside = lb_list & ub_list & ineq_list & eq_list;
             else
@@ -868,6 +873,18 @@ classdef (Abstract) MT1DCPWA < LSIPMinCuttingPlaneAlgo
                 min_pts(input_id, :) = result.x(model.quality_indices)';
                 min_vals(input_id) = result.objval;
             end
+        end
+
+        function updateLSIPUB(obj, min_lb, optimizers) %#ok<INUSD> 
+            % Update the LSIP upper bound after each call to the global
+            % minimization oracle
+            % Inputs:
+            %   min_lb: the lower bound for the global minimization problem
+            %   optimizers: a set of approximate optimizers of the global
+            %   minimization problem
+
+            obj.Runtime.LSIP_UB = min(obj.Runtime.LSIP_UB, ...
+                obj.Runtime.LSIP_LB - min_lb);
         end
     end
 end

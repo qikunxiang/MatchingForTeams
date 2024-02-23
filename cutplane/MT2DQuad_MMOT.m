@@ -1223,8 +1223,10 @@ classdef MT2DQuad_MMOT < MT2DQuad
                     - scaled_marg_samps) .* ql_cont, 2);
             end
 
-            UB_disc_list = UB_disc_mat * obj.MarginalWeights;
-            UB_cont_list = UB_cont_mat * obj.MarginalWeights;
+            UB_disc_list = UB_disc_mat * obj.MarginalWeights ...
+                + obj.QuadraticConstant;
+            UB_cont_list = UB_cont_mat * obj.MarginalWeights ...
+                + obj.QuadraticConstant;
 
             UB_disc = mean(UB_disc_list);
             UB_cont = mean(UB_cont_list);
@@ -1507,7 +1509,10 @@ classdef MT2DQuad_MMOT < MT2DQuad
             % a minimization problem, we need to transform our maximization
             % problem into a minimization problem
             model.modelsense = 'min';
-            model.objcon = 0;
+
+            % the constant in the objective is the sum of the quadratic
+            % constants that do not affect the matching
+            model.objcon = -obj.QuadraticConstant;
 
             % the coefficients corresponding to the first test function of
             % each marginal is not included in the decision variables for
@@ -1678,18 +1683,18 @@ classdef MT2DQuad_MMOT < MT2DQuad
             while true
                 if obj.GlobalOptions.display
                     % display the current upper and lower bounds
-                    fprintf(['GlobalMin_BnB: ' ...
+                    fprintf(['%s: ' ...
                         'iteration %4d: LB = %10.4f, UB = %10.4f, ' ...
                         'UB - LB = %10.6f\n'], ...
-                        iter, LB, UB, UB - LB);
+                        class(obj), iter, LB, UB, UB - LB);
                 end
 
                 % logging
                 if ~isempty(obj.GlobalOptions.log_file)
-                    fprintf(log_file, ['iteration %4d: ' ...
+                    fprintf(log_file, ['%s: iteration %4d: ' ...
                         'LB = %10.4f, UB = %10.4f, ' ...
                         'UB - LB = %10.6f\n'], ...
-                        iter, LB, UB, UB - LB);
+                        class(obj), iter, LB, UB, UB - LB);
                 end
 
                 if (UB - LB <= tolerance) || (UB < termination_thres)
@@ -1976,7 +1981,7 @@ classdef MT2DQuad_MMOT < MT2DQuad
 
             vec = result.x;
             primal_sol = struct;
-            primal_sol.Constant = vec(1) + violation;
+            primal_sol.Constant = vec(1) - violation;
 
             vert_coefs = zeros(obj.Storage.TotalVertNum, 1);
             vert_coefs(obj.Storage.DeciVarIndicesInTestFuncs) = vec(2:end);

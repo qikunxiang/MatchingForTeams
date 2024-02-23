@@ -1860,7 +1860,7 @@ classdef MT1DCPWA_MMOT < MT1DCPWA
 
             vec = result.x;
             primal_sol = struct;
-            primal_sol.Constant = vec(1) + violation;
+            primal_sol.Constant = vec(1) - violation;
 
             vert_coefs = zeros(obj.Storage.TotalKnotNum, 1);
             vert_coefs(obj.Storage.DeciVarIndicesInTestFuncs) = vec(2:end);

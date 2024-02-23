@@ -289,14 +289,14 @@ classdef MT1DCPWA_ParTrans < MT1DCPWA
                 % and use their indices in the coupling with the quality
                 % space
                 [old_coup_marg_atoms_cell{marg_id}, ~, uind_marg] ...
-                    = unique(input_atoms, 'stable');
+                    = unique(round(input_atoms, 6), 'stable');
                 old_coup_marg_probs_cell{marg_id} = accumarray( ...
                     uind_marg, old_coup_probs_cell{marg_id});
 
                 % store only the unique atoms in the quality space and
                 % use their indices in the coupling with the marginal
                 [old_coup_q_atoms_cell{marg_id}, ~, uind_quality] ...
-                    = unique(quality_atoms, 'rows', 'stable');
+                    = unique(round(quality_atoms, 6), 'rows', 'stable');
                 old_coup_q_probs_cell{marg_id} = accumarray( ...
                     uind_quality, old_coup_probs_cell{marg_id});
                 
@@ -364,9 +364,26 @@ classdef MT1DCPWA_ParTrans < MT1DCPWA
                 % respect to the test functions
                 q_dist_mat = pdist2(old_coup_q_atoms_cell{marg_id}, ...
                     fixed_meas_q_atoms, 'euclidean');
-                [q_coup_atom_indices, q_coup_probs] = discrete_OT( ...
-                    old_coup_q_probs_cell{marg_id}, ...
-                    fixed_meas_q_probs, q_dist_mat);
+
+                if size(q_dist_mat, 1) * size(q_dist_mat, 2) > 1e6
+                    % if there are too many atoms in the discrete measures,
+                    % a direct computation of discrete OT may cause memory
+                    % throttling; thus, we resort to a constraint
+                    % generation scheme
+                    cp_options = struct('display', false);
+                    OT = OTDiscrete(old_coup_q_probs_cell{marg_id}, ...
+                        fixed_meas_q_probs, q_dist_mat, cp_options);
+                    [hcoup_indices, ~] = ...
+                        OT.generateHeuristicCoupling();
+                    OT.run(hcoup_indices, 1e-6);
+                    coup = OT.Runtime.DualSolution;
+                    q_coup_atom_indices = coup.CoupIndices;
+                    q_coup_probs = coup.Probabilities;
+                else
+                    [q_coup_atom_indices, q_coup_probs] = discrete_OT( ...
+                        old_coup_q_probs_cell{marg_id}, ...
+                        fixed_meas_q_probs, q_dist_mat);
+                end
 
                 % perform discrete reassembly to get the new coupling;
                 % in this case, we need to reassemble both marginals in
@@ -444,7 +461,7 @@ classdef MT1DCPWA_ParTrans < MT1DCPWA
                 ind_counter = ind_counter ...
                     + obj.Storage.MargKnotNumList(marg_id) - 1;
 
-                % note that the first test function on the quality sapce is
+                % note that the first test function on the quality space is
                 % removed for identification purposes
                 obj.Storage.DeciVarQualityTestFuncIndices{marg_id} = ...
                     ind_counter + (1:quality_vert_num - 1)';
@@ -1135,7 +1152,7 @@ classdef MT1DCPWA_ParTrans < MT1DCPWA
             model.lb = -inf(decivar_num, 1);
             model.ub = inf(decivar_num, 1);
 
-            % store the equality constraints as fields of the model
+            % the equality constraints
             A_eq = horzcat(A_eq_cell{:});
             rhs_eq = zeros(quality_vert_num - 1, 1);
 
@@ -1147,7 +1164,7 @@ classdef MT1DCPWA_ParTrans < MT1DCPWA
 
             % parameters of the LP solver
             LP_options = struct;
-            LP_options.OutputFlag = 1;
+            LP_options.OutputFlag = 0;
             LP_options.FeasibilityTol = 1e-9;
 
             result = gurobi(model, LP_options);
@@ -1233,7 +1250,7 @@ classdef MT1DCPWA_ParTrans < MT1DCPWA
             % Evaluate the transfer functions resulted from optimized
             % parametric functions. These transfer functions is part of
             % approximate matching equilibria. The computation is done
-            % is batches if necessary.
+            % in batches if necessary.
             % Inputs:
             %   pts: matrix containing the input points
             %   ref_pt: vector indicating a reference point where the 
@@ -1898,7 +1915,8 @@ classdef MT1DCPWA_ParTrans < MT1DCPWA
 
             for marg_id = 1:marg_num
                 model.A_ineq_cell{marg_id} = sparse(0, ...
-                    marg_knot_num_list(marg_id) - 1);
+                    1 + marg_knot_num_list(marg_id) - 1 ...
+                    + quality_vert_num - 1);
                 model.rhs_ineq_cell{marg_id} = zeros(0, 1);
             end
 
@@ -2331,7 +2349,7 @@ classdef MT1DCPWA_ParTrans < MT1DCPWA
                 primal_sol{marg_id} = struct;
                 primal_sol{marg_id}.Constant = ...
                     vec(obj.Storage.DeciVarInterceptIndices(marg_id)) ...
-                    + obj.Runtime.GlobalMin.MinVals(marg_id);
+                    - obj.Runtime.GlobalMin.MinVals(marg_id);
 
                 % add back the first test function for the marginal
                 primal_sol{marg_id}.Coefficients = [0; ...
@@ -2396,8 +2414,8 @@ classdef MT1DCPWA_ParTrans < MT1DCPWA
 
             cand_id = obj.Options.discmeas_cand_index;
             cand = obj.Runtime.DualSolution{cand_id};
-            [cand_atoms, ~, cand_uind] = unique(cand.QualityAtoms, ...
-                'rows', 'stable');
+            [cand_atoms, ~, cand_uind] = unique( ...
+                round(cand.QualityAtoms, 6), 'rows', 'stable');
             cand_atom_num = size(cand_atoms, 1);
             cand_probs = accumarray(cand_uind, cand.Probabilities, ...
                 [cand_atom_num, 1]);
@@ -2410,8 +2428,8 @@ classdef MT1DCPWA_ParTrans < MT1DCPWA
 
             for marg_id = 1:marg_num
                 dual_sol = obj.Runtime.DualSolution{marg_id};
-                [marg_atoms, ~, m_uind] = unique(dual_sol.InputAtoms, ...
-                    'rows', 'stable');
+                [marg_atoms, ~, m_uind] = unique( ...
+                    round(dual_sol.InputAtoms, 6), 'rows', 'stable');
                 marg_atoms_cell{marg_id} = marg_atoms;
                 marg_atom_num = length(marg_atoms);
 
@@ -2443,8 +2461,27 @@ classdef MT1DCPWA_ParTrans < MT1DCPWA
                 dist_mat = pdist2(cand_atoms, quality_atoms, 'euclidean');
                 quality_probs = accumarray(q_uind, ...
                     dual_sol.Probabilities, [quality_atom_num, 1]);
-                [coup_atoms, coup_probs, discreteOT_cost_list(marg_id)] ...
-                    = discrete_OT(cand_probs, quality_probs, dist_mat);
+                
+                if size(dist_mat, 1) * size(dist_mat, 2) > 1e6
+                    % if there are too many atoms in the discrete measures,
+                    % a direct computation of discrete OT may cause memory
+                    % throttling; thus, we resort to a constraint
+                    % generation scheme
+                    cp_options = struct('display', false);
+                    OT = OTDiscrete(cand_probs, quality_probs, ...
+                        dist_mat, cp_options);
+                    [hcoup_indices, ~] = ...
+                        OT.generateHeuristicCoupling();
+                    OT.run(hcoup_indices, 1e-6);
+                    coup = OT.Runtime.DualSolution;
+                    coup_atoms = coup.CoupIndices;
+                    coup_probs = coup.Probabilities;
+                    discreteOT_cost_list(marg_id) = -OT.Runtime.LSIP_LB;
+                else
+                    [coup_atoms, coup_probs, ...
+                        discreteOT_cost_list(marg_id)] ...
+                        = discrete_OT(cand_probs, quality_probs, dist_mat);
+                end
                 
                 % construct the sparse matrix representing the coupling
                 % between the candidate discrete measure and this discrete

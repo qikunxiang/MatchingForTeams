@@ -1,18 +1,17 @@
-result_file_path = ['experiments/experiment2/' ...
-    'exp2_results.mat'];
+CONFIG = BM1D_config();
 
-load(result_file_path);
+load(CONFIG.SAVEPATH_SUMMARY);
 
 for row_id = 1:length(marg_list)
     marg_str = sprintf('%3d & ', marg_list(row_id));
 
-    rst_mean_err = mean(ParTrans.ERR(row_id, :), 'all');
-    rst_max_err = max(ParTrans.ERR(row_id, :));
-    rst_mean_time = round(mean(ParTrans.TIME(row_id, :), 'all'));
-    rst_max_time = round(max(ParTrans.TIME(row_id, :)));
-    rst_mean_sp = mean(ParTrans.SPAR(row_id, :), 'all');
-    rst_max_sp = max(ParTrans.SPAR(row_id, :));
-    rst_th_sp = max(ParTrans.THSPAR(row_id, :));
+    rst_mean_err = mean(RST.ERR(row_id, :), 'all');
+    rst_max_err = max(RST.ERR(row_id, :));
+    rst_mean_time = round(mean(RST.TIME(row_id, :), 'all'));
+    rst_max_time = round(max(RST.TIME(row_id, :)));
+    rst_mean_sp = mean(RST.SPAR(row_id, :), 'all');
+    rst_max_sp = max(RST.SPAR(row_id, :));
+    rst_th_sp = max(RST.THSPAR(row_id, :));
 
     if any(isnan([rst_mean_err; rst_max_err; rst_mean_time; ...
             rst_max_time; rst_mean_sp; rst_max_sp; rst_th_sp]))

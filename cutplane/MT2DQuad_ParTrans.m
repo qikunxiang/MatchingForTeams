@@ -46,6 +46,11 @@ classdef MT2DQuad_ParTrans < MT2DQuad
                 obj.GlobalOptions.pool_size = 100;
             end
 
+            if ~isfield(obj.GlobalOptions, 'low_memory_mode') ...
+                    || isempty(obj.GlobalOptions.low_memory_mode)
+                obj.GlobalOptions.low_memory_mode = false;
+            end
+
             if ~isfield(obj.GlobalOptions, 'display') ...
                     || isempty(obj.GlobalOptions.display)
                 obj.GlobalOptions.display = true;
@@ -305,16 +310,32 @@ classdef MT2DQuad_ParTrans < MT2DQuad
                 new_probs = ...
                     obj.Marginals{marg_id}.SimplicialTestFuncs.Integrals;
 
-                % the cost function is the Euclidean distance
-                dist_mat = pdist2(old_atoms_cell{marg_id}, ...
-                    new_atoms, 'euclidean');
-
                 % compute an optimal coupling between the original discrete
                 % marginal and the new discrete marginal discrete optimal
                 % transport
-                [marg_coup_atom_indices, marg_coup_probs] ...
-                    = discrete_OT(old_probs_cell{marg_id}, ...
-                    new_probs, dist_mat);
+
+                % the cost function is the Euclidean distance
+                dist_mat = pdist2(old_atoms_cell{marg_id}, ...
+                    new_atoms, 'euclidean');
+                if size(dist_mat, 1) * size(dist_mat, 2) > 1e6
+                    % if there are too many atoms in the discrete measures,
+                    % a direct computation of discrete OT may cause memory
+                    % throttling; thus, we resort to a constraint
+                    % generation scheme
+                    cp_options = struct('display', false);
+                    OT = OTDiscrete(old_probs_cell{marg_id}, ...
+                        new_probs, dist_mat, cp_options);
+                    [hcoup_indices, ~] = ...
+                        OT.generateHeuristicCoupling();
+                    OT.run(hcoup_indices, 1e-6);
+                    coup = OT.Runtime.DualSolution;
+                    marg_coup_atom_indices = coup.CoupIndices;
+                    marg_coup_probs = coup.Probabilities;
+                else
+                    [marg_coup_atom_indices, marg_coup_probs] ...
+                        = discrete_OT(old_probs_cell{marg_id}, ...
+                        new_probs, dist_mat);
+                end
 
                 % compute an optimal coupling between the measure on
                 % the quality space and the fixed measure on the
@@ -323,9 +344,26 @@ classdef MT2DQuad_ParTrans < MT2DQuad
                 % respect to the test functions
                 q_dist_mat = pdist2(old_coup_q_atoms_cell{marg_id}, ...
                     fixed_meas_q_atoms, 'euclidean');
-                [q_coup_atom_indices, q_coup_probs] = discrete_OT( ...
-                    old_coup_q_probs_cell{marg_id}, ...
-                    fixed_meas_q_probs, q_dist_mat);
+
+                if size(q_dist_mat, 1) * size(q_dist_mat, 2) > 1e6
+                    % if there are too many atoms in the discrete measures,
+                    % a direct computation of discrete OT may cause memory
+                    % throttling; thus, we resort to a constraint
+                    % generation scheme
+                    cp_options = struct('display', false);
+                    OT = OTDiscrete(old_coup_q_probs_cell{marg_id}, ...
+                        fixed_meas_q_probs, q_dist_mat, cp_options);
+                    [hcoup_indices, ~] = ...
+                        OT.generateHeuristicCoupling();
+                    OT.run(hcoup_indices, 1e-6);
+                    coup = OT.Runtime.DualSolution;
+                    q_coup_atom_indices = coup.CoupIndices;
+                    q_coup_probs = coup.Probabilities;
+                else
+                    [q_coup_atom_indices, q_coup_probs] = discrete_OT( ...
+                        old_coup_q_probs_cell{marg_id}, ...
+                        fixed_meas_q_probs, q_dist_mat);
+                end
 
                 % perform discrete reassembly to get the new coupling;
                 % in this case, we need to reassemble both marginals in
@@ -431,133 +469,251 @@ classdef MT2DQuad_ParTrans < MT2DQuad
             % oracle
             obj.Storage.GlobalMin = struct;
 
-            % compute the quantities related to the KKT conditions for the
-            % minimization problem within each triangle in the quality
-            % space
-            obj.Storage.GlobalMin.KKTMat = cell(marg_num, 1);
-            obj.Storage.GlobalMin.KKTFixed = cell(marg_num, 1);
+            % when solving the global minimization problem, we need to
+            % split the triangles in the quality space into batches to
+            % avoid excessive memory usage
+            marg_vert_num_max = max(obj.Storage.MargVertNumList);
+            
+            if marg_vert_num_max <= 100
+                tri_batch_size = 1e4;
+            elseif marg_vert_num_max <= 200
+                tri_batch_size = 5e3;
+            elseif marg_vert_num_max <= 500
+                tri_batch_size = 2e3;
+            elseif marg_vert_num_max <= 1000
+                tri_batch_size = 1e3;
+            elseif marg_vert_num_max <= 2000
+                tri_batch_size = 5e2;
+            elseif marg_vert_num_max <= 5000
+                tri_batch_size = 2e2;
+            else
+                tri_batch_size = 1e2;
+            end
 
-            for marg_id = 1:marg_num
-                marg_testfuncs = ...
-                    obj.Marginals{marg_id}.SimplicialTestFuncs;
-                marg_vert = marg_testfuncs.Vertices;
+            tri_batch_num = ceil(tri_num / tri_batch_size);
+            obj.Storage.GlobalMin.BatchNum = tri_batch_num;
 
-                KKT_mat_cell = cell(tri_num, 1);
-                KKT_rhs_cell = cell(tri_num, 1);
+            % store the list of triangles in each batch
+            obj.Storage.GlobalMin.BatchLists = cell(tri_batch_num, 1);
 
-                for tri_id = 1:tri_num
-                    tri_vert = quality_testfuncs.Vertices( ...
-                        quality_testfuncs.Triangles(tri_id, :), :);
+            for batch_id = 1:tri_batch_num
+                batch_start = (batch_id - 1) * tri_batch_size + 1;
+                batch_end = min(batch_id * tri_batch_size, tri_num);
+                obj.Storage.GlobalMin.BatchLists{batch_id} = ...
+                    (batch_start:batch_end)';
+            end
+            
 
-                    KKT_mat_full = [(2 * obj.MarginalWeights(marg_id)) ...
-                        * (tri_vert * tri_vert'), -eye(3), ones(3, 1); ...
-                        ones(1, 3), zeros(1, 4)];
+            % quantities related to the KKT conditions for the minimization
+            % problem within each triangle in the quality space
+            obj.Storage.GlobalMin.KKTMat = cell(marg_num, tri_batch_num);
 
-                    KKT_case1 = KKT_mat_full(:, [1, 2, 3, 7]) \ eye(4);
-                    KKT_case2 = KKT_mat_full(:, [1, 2, 6, 7]) \ eye(4);
-                    KKT_case3 = KKT_mat_full(:, [1, 3, 5, 7]) \ eye(4);
-                    KKT_case4 = KKT_mat_full(:, [2, 3, 4, 7]) \ eye(4);
-                    KKT_case5 = KKT_mat_full(:, [1, 5, 6, 7]) \ eye(4);
-                    KKT_case6 = KKT_mat_full(:, [2, 4, 6, 7]) \ eye(4);
-                    KKT_case7 = KKT_mat_full(:, [3, 4, 5, 7]) \ eye(4);
+            if ~obj.GlobalOptions.low_memory_mode
+                % fixed part related to the KKT conditions
+                obj.Storage.GlobalMin.KKTFixed = cell(marg_num, ...
+                    tri_batch_num);
+            else
+                % matrices used to construct the fixed part related to the
+                % KKT conditions during run time
+                obj.Storage.GlobalMin.KKTFixedMat = cell(tri_batch_num, 1);
+            end
 
-                    KKT_mat_cell{tri_id} = sparse( ...
-                        [KKT_case1(1:3, :); ...
-                        KKT_case2(1:3, :); ...
-                        KKT_case3(1:3, :); ...
-                        KKT_case4(1:3, :); ...
-                        zeros(1, 4); ...
-                        KKT_case5(2:3, :); ...
-                        zeros(1, 4); ...
-                        KKT_case6(2:3, :); ...
-                        zeros(1, 4); ...
-                        KKT_case7(2:3, :)]);
-                    KKT_rhs_cell{tri_id} = ...
-                        [(2 * obj.MarginalWeights(marg_id)) ...
-                        * tri_vert * marg_vert'; ...
-                        ones(1, size(marg_vert, 1))];
+            % indices linking the coefficients for the simplicial test 
+            % functions on the quality space and the values of the transfer
+            % functions evaluated at the vertices of the triangles
+            obj.Storage.GlobalMin.QualityTestFuncIndices = ...
+                cell(tri_batch_num, 1);
+            obj.Storage.GlobalMin.KKTRHSIndices = cell(tri_batch_num, 1);
+
+            % sparse matrix used to sum over the KKT coefficients in each
+            % case; used to inspect the valid cases
+            obj.Storage.GlobalMin.KKTCoefSumMat = cell(tri_batch_num, 1);
+
+            % sparse matrix used to combine KKT coefficients to compute the
+            % horizontal coordinates of candidate minimizers
+            obj.Storage.GlobalMin.ConvCombHorzMat = cell(tri_batch_num, 1);
+
+            % sparse matrix used to combine KKT coefficients to compute the
+            % vertical coordinates of candidate minimizers
+            obj.Storage.GlobalMin.ConvCombVertMat = cell(tri_batch_num, 1);
+
+            % sparse matrix used to extract the coefficients in the KKT
+            % that correspond to the weights in the convex combinations
+            obj.Storage.GlobalMin.ConvCombCoefMat = cell(3, tri_batch_num);
+
+            % row and column indices for building a sparse matrix
+            % containing the coefficients of the simplicial test functions
+            % on the quality space
+            obj.Storage.GlobalMin.TransFuncRows = cell(tri_batch_num, 1);
+            obj.Storage.GlobalMin.TransFuncCols = cell(tri_batch_num, 1);
+
+            % indices for extracting the coefficients of the simplicial
+            % test functions on the quality space from a vector in order to
+            % build a sparse matrix
+            obj.Storage.GlobalMin.TransFuncIndices = ...
+                cell(tri_batch_num, 1);
+
+            % iterate through the batches
+            for batch_id = 1:tri_batch_num
+                batch_list = ...
+                    obj.Storage.GlobalMin.BatchLists{batch_id};
+                tri_batch = quality_testfuncs.Triangles(batch_list, :);
+                tri_num_batch = size(tri_batch, 1);
+
+                for marg_id = 1:marg_num
+                    marg_testfuncs = ...
+                        obj.Marginals{marg_id}.SimplicialTestFuncs;
+                    marg_vert = marg_testfuncs.Vertices;
+
+                    KKT_mat_cell = cell(tri_num_batch, 1);
+                    KKT_rhs_cell = cell(tri_num_batch, 1);
+
+                    for tri_id = 1:tri_num_batch
+                        tri_vert = quality_testfuncs.Vertices( ...
+                            tri_batch(tri_id, :), :);
+
+                        KKT_mat_full = ...
+                            [(2 * obj.MarginalWeights(marg_id)) ...
+                            * (tri_vert * tri_vert'), -eye(3), ...
+                            ones(3, 1); ones(1, 3), zeros(1, 4)];
+
+                        KKT_case1 = KKT_mat_full(:, [1, 2, 3, 7]) \ eye(4);
+                        KKT_case2 = KKT_mat_full(:, [1, 2, 6, 7]) \ eye(4);
+                        KKT_case3 = KKT_mat_full(:, [1, 3, 5, 7]) \ eye(4);
+                        KKT_case4 = KKT_mat_full(:, [2, 3, 4, 7]) \ eye(4);
+                        KKT_case5 = KKT_mat_full(:, [1, 5, 6, 7]) \ eye(4);
+                        KKT_case6 = KKT_mat_full(:, [2, 4, 6, 7]) \ eye(4);
+                        KKT_case7 = KKT_mat_full(:, [3, 4, 5, 7]) \ eye(4);
+
+                        KKT_mat_cell{tri_id} = sparse( ...
+                            [KKT_case1(1:3, :); ...
+                            KKT_case2(1:3, :); ...
+                            KKT_case3(1:3, :); ...
+                            KKT_case4(1:3, :); ...
+                            zeros(1, 4); ...
+                            KKT_case5(2:3, :); ...
+                            zeros(1, 4); ...
+                            KKT_case6(2:3, :); ...
+                            zeros(1, 4); ...
+                            KKT_case7(2:3, :)]);
+
+                        if ~obj.GlobalOptions.low_memory_mode
+                            % when the low memory model is off, pre-compute
+                            % the fixed quantities in the KKT coefficients
+                            % and store them
+                            KKT_rhs_cell{tri_id} = ...
+                                [(2 * obj.MarginalWeights(marg_id)) ...
+                                * tri_vert * marg_vert'; ...
+                                zeros(1, size(marg_vert, 1))];
+                        end
+                    end
+
+                    obj.Storage.GlobalMin.KKTMat{marg_id, batch_id} ...
+                        = blkdiag(KKT_mat_cell{:});
+
+                    if ~obj.GlobalOptions.low_memory_mode
+                        obj.Storage.GlobalMin.KKTFixed{marg_id, ...
+                            batch_id} = ...
+                            obj.Storage.GlobalMin.KKTMat{marg_id, ...
+                            batch_id} * vertcat(KKT_rhs_cell{:}) ...
+                            + repmat([zeros(12, 1); 1; 0; 0; ...
+                            1; 0; 0; 1; 0; 0], tri_num_batch, 1);
+                    end
                 end
 
-                obj.Storage.GlobalMin.KKTMat{marg_id} ...
-                    = blkdiag(KKT_mat_cell{:});
-                obj.Storage.GlobalMin.KKTFixed{marg_id} = ...
-                    obj.Storage.GlobalMin.KKTMat{marg_id} ...
-                    * vertcat(KKT_rhs_cell{:}) ...
-                    + repmat([zeros(12, 1); 1; 0; 0; 1; 0; 0; 1; 0; 0], ...
-                    tri_num, 1);
+                if obj.GlobalOptions.low_memory_mode
+                    % if the low memory mode is on, the fixed quantities in
+                    % the KKT coefficients will only be constructed at
+                    % runtime to save memory
+                    KKT_fixed_mat_cell = cell(tri_num_batch, 1);
+                    
+                    for tri_id = 1:tri_num_batch
+                        tri_vert = quality_testfuncs.Vertices( ...
+                            tri_batch(tri_id, :), :);
+                        KKT_fixed_mat_cell{tri_id} = sparse( ...
+                            [tri_vert; zeros(1, 2)]);
+                    end
+
+                    obj.Storage.GlobalMin.KKTFixedMat{batch_id} = ...
+                        vertcat(KKT_fixed_mat_cell{:});
+                end
+
+                % unwrap the vertices that appear in the triangles in the
+                % batch
+                tri_batch_transp = tri_batch';
+                obj.Storage.GlobalMin.QualityTestFuncIndices{batch_id} ...
+                    = tri_batch_transp(:);
+                obj.Storage.GlobalMin.KKTRHSIndices{batch_id} = find( ...
+                    repmat([1; 1; 1; 0], tri_num_batch, 1));
+
+                % compute the sparse matrices for combining and extracting
+                % KKT coefficients
+                comb_r = repelem((1:7 * tri_num_batch)', 3, 1);
+                comb_c = (1:21 * tri_num_batch)';
+
+                horz_coord_cell = cell(tri_num_batch, 1);
+                vert_coord_cell = cell(tri_num_batch, 1);
+
+                row_counter = 0;
+                col_counter = 0;
+
+                transfunc_row_cell = cell(tri_num_batch, 1);
+                transfunc_col_cell = cell(tri_num_batch, 1);
+                transfunc_index_cell = cell(tri_num_batch, 1);
+
+                for tri_id = 1:tri_num_batch
+                    tri_vert_indices = tri_batch(tri_id, :)';
+                    tri_vert = [quality_testfuncs.Vertices( ...
+                        tri_batch(tri_id, :), :); zeros(1, 2)];
+                    horz_coord_cell{tri_id} = tri_vert( ...
+                        [1, 2, 3, ...
+                        1, 2, 4, 1, 3, 4, 2, 3, 4, ...
+                        1, 4, 4, 2, 4, 4, 3, 4, 4], 1);
+                    vert_coord_cell{tri_id} = tri_vert( ...
+                        [1, 2, 3, ...
+                        1, 2, 4, 1, 3, 4, 2, 3, 4, ...
+                        1, 4, 4, 2, 4, 4, 3, 4, 4], 2);
+
+                    transfunc_row_cell{tri_id} = row_counter ...
+                        + [1; 1; 1; 2; 2; 3; 3; 4; 4; 5; 6; 7];
+                    transfunc_col_cell{tri_id} = col_counter ...
+                        + [1; 2; 3; 4; 5; 7; 8; 10; 11; 13; 16; 19];
+                    row_counter = row_counter + 7;
+                    col_counter = col_counter + 21;
+
+                    transfunc_index_cell{tri_id} = tri_vert_indices( ...
+                        [1; 2; 3; 1; 2; 1; 3; 2; 3; 1; 2; 3]);
+                end
+
+                obj.Storage.GlobalMin.KKTCoefSumMat{batch_id} = ...
+                    sparse(comb_r, comb_c, 1, 7 * tri_num_batch, ...
+                    21 * tri_num_batch);
+                obj.Storage.GlobalMin.ConvCombHorzMat{batch_id} = ...
+                    sparse(comb_r, comb_c, vertcat(horz_coord_cell{:}), ...
+                    7 * tri_num_batch, 21 * tri_num_batch);
+                obj.Storage.GlobalMin.ConvCombVertMat{batch_id} = ...
+                    sparse(comb_r, comb_c, vertcat(vert_coord_cell{:}), ...
+                    7 * tri_num_batch, 21 * tri_num_batch);
+                obj.Storage.GlobalMin.ConvCombCoefMat{1, batch_id} = ...
+                    sparse(comb_r, comb_c, repmat( ...
+                    [1; 0; 0; 1; 0; 0; 1; 0; 0; 0; 0; 0; ...
+                    1; 0; 0; 0; 0; 0; 0; 0; 0], tri_num_batch, 1));
+                obj.Storage.GlobalMin.ConvCombCoefMat{2, batch_id} = ...
+                    sparse(comb_r, comb_c, repmat( ...
+                    [0; 1; 0; 0; 1; 0; 0; 0; 0; 1; 0; 0; ...
+                    0; 0; 0; 1; 0; 0; 0; 0; 0], tri_num_batch, 1));
+                obj.Storage.GlobalMin.ConvCombCoefMat{3, batch_id} = ...
+                    sparse(comb_r, comb_c, repmat( ...
+                    [0; 0; 1; 0; 0; 0; 0; 1; 0; 0; 1; 0; ...
+                    0; 0; 0; 0; 0; 0; 1; 0; 0], tri_num_batch, 1));
+
+                obj.Storage.GlobalMin.TransFuncRows{batch_id} = ...
+                    vertcat(transfunc_row_cell{:});
+                obj.Storage.GlobalMin.TransFuncCols{batch_id} = ...
+                    vertcat(transfunc_col_cell{:});
+                obj.Storage.GlobalMin.TransFuncIndices{batch_id} = ...
+                    vertcat(transfunc_index_cell{:});
             end
-
-            quality_tri_transp = quality_testfuncs.Triangles';
-            obj.Storage.GlobalMin.QualityTestFuncIndices = ...
-                quality_tri_transp(:);
-            obj.Storage.GlobalMin.KKTRHSIndices = find( ...
-                repmat([1; 1; 1; 0], tri_num, 1));
-
-            comb_r = repelem((1:7 * tri_num)', 3, 1);
-            comb_c = (1:21 * tri_num)';
-
-            horz_coord_cell = cell(tri_num, 1);
-            vert_coord_cell = cell(tri_num, 1);
-
-            row_counter = 0;
-            col_counter = 0;
-
-            transfunc_row_cell = cell(tri_num, 1);
-            transfunc_col_cell = cell(tri_num, 1);
-            transfunc_index_cell = cell(tri_num, 1);
-
-            for tri_id = 1:tri_num
-                tri_vert_indices = quality_testfuncs.Triangles(tri_id, :)';
-                tri_vert = [quality_testfuncs.Vertices( ...
-                    tri_vert_indices, :); zeros(1, 2)];
-                horz_coord_cell{tri_id} = tri_vert( ...
-                    [1, 2, 3, ...
-                    1, 2, 4, 1, 3, 4, 2, 3, 4, ...
-                    1, 4, 4, 2, 4, 4, 3, 4, 4], 1);
-                vert_coord_cell{tri_id} = tri_vert( ...
-                    [1, 2, 3, ...
-                    1, 2, 4, 1, 3, 4, 2, 3, 4, ...
-                    1, 4, 4, 2, 4, 4, 3, 4, 4], 2);
-
-                transfunc_row_cell{tri_id} = row_counter ...
-                    + [1; 1; 1; 2; 2; 3; 3; 4; 4; 5; 6; 7];
-                transfunc_col_cell{tri_id} = col_counter ...
-                    + [1; 2; 3; 4; 5; 7; 8; 10; 11; 13; 16; 19];
-                row_counter = row_counter + 7;
-                col_counter = col_counter + 21;
-
-                transfunc_index_cell{tri_id} = tri_vert_indices( ...
-                    [1; 2; 3; 1; 2; 1; 3; 2; 3; 1; 2; 3]);
-            end
-
-            obj.Storage.GlobalMin.KKTCoefSumMat = ...
-                sparse(comb_r, comb_c, 1, 7 * tri_num, 21 * tri_num);
-            obj.Storage.GlobalMin.ConvCombHorzMat = ...
-                sparse(comb_r, comb_c, vertcat(horz_coord_cell{:}), ...
-                7 * tri_num, 21 * tri_num);
-            obj.Storage.GlobalMin.ConvCombVertMat = ...
-                sparse(comb_r, comb_c, vertcat(vert_coord_cell{:}), ...
-                7 * tri_num, 21 * tri_num);
-            obj.Storage.GlobalMin.ConvCombCoefMat = cell(3, 1);
-            obj.Storage.GlobalMin.ConvCombCoefMat{1} = sparse( ...
-                comb_r, comb_c, repmat( ...
-                [1; 0; 0; 1; 0; 0; 1; 0; 0; 0; 0; 0; ...
-                1; 0; 0; 0; 0; 0; 0; 0; 0], tri_num, 1));
-            obj.Storage.GlobalMin.ConvCombCoefMat{2} = sparse( ...
-                comb_r, comb_c, repmat( ...
-                [0; 1; 0; 0; 1; 0; 0; 0; 0; 1; 0; 0; ...
-                0; 0; 0; 1; 0; 0; 0; 0; 0], tri_num, 1));
-            obj.Storage.GlobalMin.ConvCombCoefMat{3} = sparse( ...
-                comb_r, comb_c, repmat( ...
-                [0; 0; 1; 0; 0; 0; 0; 1; 0; 0; 1; 0; ...
-                0; 0; 0; 0; 0; 0; 1; 0; 0], tri_num, 1));
-
-            obj.Storage.GlobalMin.TransFuncRows = ...
-                vertcat(transfunc_row_cell{:});
-            obj.Storage.GlobalMin.TransFuncCols = ...
-                vertcat(transfunc_col_cell{:});
-            obj.Storage.GlobalMin.TransFuncIndices = ...
-                vertcat(transfunc_index_cell{:});
 
             obj.Storage.SimplicialTestFuncsInitialized = true;
 
@@ -645,8 +801,8 @@ classdef MT2DQuad_ParTrans < MT2DQuad
                 marg_grid_pts = marg_vertices(marg_grid_indices, :);
                 quality_grid_pts = quality_vertices(q_grid_indices, :);
                 rhs_ineq_cell{marg_id} = obj.MarginalWeights(marg_id) ...
-                    * sum(marg_grid_pts .* (marg_grid_pts ...
-                    - 2 * quality_grid_pts), 2);
+                    * sum(quality_grid_pts .* (quality_grid_pts ...
+                    - 2 * marg_grid_pts), 2);
 
                 constr_num_list(marg_id) = marg_vert_num ...
                     * quality_vert_num;
@@ -680,7 +836,7 @@ classdef MT2DQuad_ParTrans < MT2DQuad
 
             % parameters of the LP solver
             LP_options = struct;
-            LP_options.OutputFlag = 1;
+            LP_options.OutputFlag = 0;
 
             result = gurobi(model, LP_options);
 
@@ -730,7 +886,7 @@ classdef MT2DQuad_ParTrans < MT2DQuad
             % parametrized by simplicial test functions that is optimized
             % using the cutting plane algorithm. This corresponds to the
             % primal solution of the LSIP problem. The computation is done
-            % is batches if necessary.
+            % in batches if necessary.
             % Inputs:
             %   marg_id: the index of the marginal
             %   pts: two-column matrix containing the input points
@@ -1128,8 +1284,10 @@ classdef MT2DQuad_ParTrans < MT2DQuad
                     - scaled_marg_samps) .* ql_cont, 2);
             end
 
-            UB_disc_list = UB_disc_mat * obj.MarginalWeights;
-            UB_cont_list = UB_cont_mat * obj.MarginalWeights;
+            UB_disc_list = UB_disc_mat * obj.MarginalWeights ...
+                + obj.QuadraticConstant;
+            UB_cont_list = UB_cont_mat * obj.MarginalWeights ...
+                + obj.QuadraticConstant;
 
             UB_disc = mean(UB_disc_list);
             UB_cont = mean(UB_cont_list);
@@ -1360,7 +1518,10 @@ classdef MT2DQuad_ParTrans < MT2DQuad
             % a minimization problem, we need to transform our maximization
             % problem into a minimization problem
             model.modelsense = 'min';
-            model.objcon = 0;
+
+            % the constant in the objective is the sum of the quadratic
+            % constants that do not affect the matching
+            model.objcon = -obj.QuadraticConstant;
 
             % the coefficients corresponding to the first test function of
             % each marginal is not included in the decision variables for
@@ -1428,6 +1589,8 @@ classdef MT2DQuad_ParTrans < MT2DQuad
                     pool_vals, pool_costs, min_vals_list(marg_id)] ...
                     = obj.computeGlobalMin(marg_id, quality_vert_vals, ...
                     marg_vert_vals, objective_const);
+
+
                 pool_neg_list = pool_vals < 0;
                 optimizers{marg_id} = struct( ...
                     'vertex_indices', pool_inds(pool_neg_list), ...
@@ -1483,142 +1646,257 @@ classdef MT2DQuad_ParTrans < MT2DQuad
                 obj.Marginals{marg_id}.SimplicialTestFuncs.Vertices;
             marg_vert_num = size(marg_vertices, 1);
 
-            qualtity_triangles = obj.Quality.SimplicialTestFuncs.Triangles;
+            quality_triangles = obj.Quality.SimplicialTestFuncs.Triangles;
             quality_vert_num = ...
                 size(obj.Quality.SimplicialTestFuncs.Vertices, 1);
-            tri_num = size(qualtity_triangles, 1);
 
-            % variable part of the right-hand side of the KKT equations
-            KKT_rhs = zeros(tri_num * 4, 1);
-            KKT_rhs(obj.Storage.GlobalMin.KKTRHSIndices) = ...
-                quality_vert_vals( ...
-                obj.Storage.GlobalMin.QualityTestFuncIndices);
+            tri_batch_num = obj.Storage.GlobalMin.BatchNum;
 
-            % matrix containing the computed coefficients from the KKT
-            % equations
-            KKT_coef_mat = obj.Storage.GlobalMin.KKTFixed{marg_id} ...
-                + obj.Storage.GlobalMin.KKTMat{marg_id} * KKT_rhs;
+            pool_inds_cell = cell(tri_batch_num, 1);
+            pool_pts_cell = cell(tri_batch_num, 1);
+            pool_testfuncs_cell = cell(tri_batch_num, 1);
+            pool_vals_cell = cell(tri_batch_num, 1);
+            pool_costs_cell = cell(tri_batch_num, 1);
+            min_val_list = zeros(tri_batch_num, 1);
 
-            % logical matrix indicating those case that are valid
-            % (positivity constraints on the variables are satisfied)
-            KKT_valid_mat = (obj.Storage.GlobalMin.KKTCoefSumMat ...
-                * (KKT_coef_mat < -1e-14)) == 0;
+            % iterate through the batches
+            for batch_id = 1:tri_batch_num
+                batch_list = obj.Storage.GlobalMin.BatchLists{batch_id};
 
-            % horizontal and vertical coordinates of the candidate
-            % optimizers (regardless of whether they are valid solutions)
-            opt_horz = obj.Storage.GlobalMin.ConvCombHorzMat ...
-                * KKT_coef_mat;
-            opt_vert = obj.Storage.GlobalMin.ConvCombVertMat ...
-                * KKT_coef_mat;
+                tri_batch = quality_triangles(batch_list, :);
+                tri_num_batch = size(tri_batch, 1);
 
-            % coefficients in the convex combinations of the candidate
-            % optimizers
-            coef1 = obj.Storage.GlobalMin.ConvCombCoefMat{1} ...
-                * KKT_coef_mat;
-            coef2 = obj.Storage.GlobalMin.ConvCombCoefMat{2} ...
-                * KKT_coef_mat;
-            coef3 = obj.Storage.GlobalMin.ConvCombCoefMat{3} ...
-                * KKT_coef_mat;
+                % variable part of the right-hand side of the KKT equations
+                KKT_rhs = ones(tri_num_batch * 4, 1);
+                KKT_rhs(obj.Storage.GlobalMin.KKTRHSIndices{batch_id}) ...
+                    = quality_vert_vals( ...
+                    obj.Storage.GlobalMin.QualityTestFuncIndices{ ...
+                    batch_id});
+    
+                % compute the matrix containing the computed coefficients 
+                % from the KKT equations
+                if ~obj.GlobalOptions.low_memory_mode
+                    % when the low memory mode is off, use the pre-computed
+                    % fixed matrix to avoid the expensive matrix-matrix
+                    % product
+                    KKT_coef_mat = obj.Storage.GlobalMin.KKTFixed{ ...
+                        marg_id, batch_id} ...
+                        + obj.Storage.GlobalMin.KKTMat{marg_id, ...
+                        batch_id} * KKT_rhs;
+                else
+                    % when the low memory mode is on, the pre-computed
+                    % fixed matrix is unavailable, and we construct the
+                    % fixed part before computing the matrix-matrix product
+                    KKT_coef_mat = obj.Storage.GlobalMin.KKTMat{ ...
+                        marg_id, batch_id} * (KKT_rhs ...
+                        + ((2 * obj.MarginalWeights(marg_id)) ...
+                        * obj.Storage.GlobalMin.KKTFixedMat{batch_id}) ...
+                        * marg_vertices') ...
+                        + repmat([zeros(12, 1); 1; 0; 0; 1; 0; 0; ...
+                        1; 0; 0], tri_num_batch, 1);
+                end
+    
+                % row and column indices of those cases that are valid 
+                % (positivity constraints on the variables are satisfied)
+                [KKT_valid_r, KKT_valid_c] = ...
+                    find((obj.Storage.GlobalMin.KKTCoefSumMat{batch_id} ...
+                    * (KKT_coef_mat < -1e-14)) == 0);
+    
+                % compute the corresponding triangle indices and case 
+                % indices from the row indices
+                KKT_valid_tri_indices = ceil(KKT_valid_r / 7);
+                KKT_valid_case_indices = mod(KKT_valid_r - 1, 7) + 1;
+    
+                % compute the identifiers consisting of triangle indices 
+                % and column indices
+                KKT_valid_tri_col_indices = (KKT_valid_c - 1) ...
+                    * tri_num_batch + KKT_valid_tri_indices;
+    
+                % if more than one cases in a triangle are valid, retain 
+                % only the last (since it should be numerically more 
+                % stable)
+                [~, KKT_valid_tri_unique] = ...
+                    unique(flipud(KKT_valid_tri_col_indices), 'stable');
+                KKT_valid_tri_unique = ...
+                    flipud(length(KKT_valid_tri_indices) + 1 ...
+                    - KKT_valid_tri_unique);
+                KKT_valid_tri_indices = ...
+                    KKT_valid_tri_indices(KKT_valid_tri_unique);
+                KKT_valid_case_indices = ...
+                    KKT_valid_case_indices(KKT_valid_tri_unique);
+                KKT_valid_c = KKT_valid_c(KKT_valid_tri_unique);
+                KKT_valid_r = (KKT_valid_tri_indices - 1) * 7 ...
+                    + KKT_valid_case_indices;
+    
+                % convert into linear indices for indexing subsequent 
+                % computed results
+                KKT_valid_lin = sub2ind([7 * tri_num_batch, ...
+                    marg_vert_num], KKT_valid_r, KKT_valid_c);
+                
+                % compute the corresponding indices in the KKT coefficients 
+                % matrix
+                KKT_coef_r = (KKT_valid_r' - 1) * 3 + [1; 2; 3];
+                KKT_coef_r = KKT_coef_r(:);
+                KKT_coef_c = repelem(KKT_valid_c, 3, 1);
+    
+                % convert into linear indices for indexing the KKT
+                % coefficients matrix
+                KKT_coef_lin = sub2ind([21 * tri_num_batch, ...
+                    marg_vert_num], KKT_coef_r, KKT_coef_c);
+    
+                % create a sparse matrix of the KKT coefficients in which
+                % only the valid (and retained) cases are non-zero
+                KKT_coef_mat_sparse = sparse(KKT_coef_r, KKT_coef_c, ...
+                    KKT_coef_mat(KKT_coef_lin), ...
+                    21 * tri_num_batch, marg_vert_num);
+    
+                % horizontal and vertical coordinates of the candidate
+                % optimizers (regardless of whether they are valid
+                % solutions)
+                opt_horz = obj.Storage.GlobalMin.ConvCombHorzMat{ ...
+                    batch_id} * KKT_coef_mat_sparse;
+                opt_horz = opt_horz(KKT_valid_lin);
+                opt_vert = obj.Storage.GlobalMin.ConvCombVertMat{ ...
+                    batch_id} * KKT_coef_mat_sparse;
+                opt_vert = opt_vert(KKT_valid_lin);
+    
+                % coefficients in the convex combinations of the candidate
+                % optimizers
+                coef1 = obj.Storage.GlobalMin.ConvCombCoefMat{1, ...
+                    batch_id} * KKT_coef_mat_sparse;
+                coef1 = coef1(KKT_valid_lin);
+                coef2 = obj.Storage.GlobalMin.ConvCombCoefMat{2, ...
+                    batch_id} * KKT_coef_mat_sparse;
+                coef2 = coef2(KKT_valid_lin);
+                coef3 = obj.Storage.GlobalMin.ConvCombCoefMat{3, ...
+                    batch_id} * KKT_coef_mat_sparse;
+                coef3 = coef3(KKT_valid_lin);
+    
+                % prepare a sparse matrix containing the values of the 
+                % transfer functions on the quality space
+                transfunc_mat = sparse( ...
+                    obj.Storage.GlobalMin.TransFuncRows{batch_id}, ...
+                    obj.Storage.GlobalMin.TransFuncCols{batch_id}, ...
+                    -quality_vert_vals( ...
+                    obj.Storage.GlobalMin.TransFuncIndices{batch_id}), ...
+                    7 * tri_num_batch, 21 * tri_num_batch);
+    
+                % compute the values of the transfer functions on the 
+                % quality space evaluated at the candidate points
+                transfunc_vec = transfunc_mat * KKT_coef_mat_sparse;
+                transfunc_vec = transfunc_vec(KKT_valid_lin);
+    
+                marg_verts_valid = marg_vertices(KKT_valid_c, :);
+                marg_vert_vals_valid = marg_vert_vals(KKT_valid_c);
+    
+                % compute the objectives at the candidate optimizers
+                min_costs = full(marg_weight * (opt_horz .^ 2 ...
+                    + opt_vert .^ 2 ...
+                    - 2 * (opt_horz .* marg_verts_valid(:, 1) ...
+                    + opt_vert .* marg_verts_valid(:, 2))));
+                min_vals = full(transfunc_vec ...
+                    + min_costs - marg_vert_vals_valid - objective_const);
+    
+                % construct the candidate minimizers
+                min_inds = KKT_valid_c;
+                min_pts = [opt_horz, opt_vert];
+                min_coefs = [coef1, coef2, coef3];
+                
+                % evaluate the simplicial test functions at all these 
+                % points
+                tri_batch_dup = repmat(tri_batch, marg_vert_num, 1);
+                min_testfuncs = sparse(repmat((1:tri_num_batch ...
+                    * marg_vert_num)', 3, 1), tri_batch_dup(:), ...
+                    min_coefs(:), tri_num_batch * marg_vert_num, ...
+                    quality_vert_num);
+    
+                % remove (approximately) duplicate optimizers
+                [~, unique_inds] = unique(round([min_pts, min_inds], ...
+                    6), 'rows', 'stable');
+                min_vals = min_vals(unique_inds);
+                min_costs = min_costs(unique_inds);
+                min_pts = min_pts(unique_inds, :);
+                min_inds = min_inds(unique_inds);
+                min_testfuncs = min_testfuncs(unique_inds, :);
+    
+                % sort the optimizers
+                [min_vals, sorted_order] = sort(min_vals, 1, ...
+                    'ascend');
+                min_costs = min_costs(sorted_order);
+                min_inds = min_inds(sorted_order);
+                min_pts = min_pts(sorted_order, :);
+                min_testfuncs = min_testfuncs(sorted_order, :);
+    
+                % retain up to obj.GlobalOptions.pool_size optimizers
+                pool_size = min(obj.GlobalOptions.pool_size, ...
+                    length(min_vals));
+                pool_inds = min_inds(1:pool_size);
+                pool_pts = min_pts(1:pool_size, :);
+                pool_testfuncs = min_testfuncs(1:pool_size, :);
+                pool_vals = min_vals(1:pool_size);
+                pool_costs = min_costs(1:pool_size);
+                min_val = pool_vals(1);
+    
+                % some points may be slightly outside the quality space due
+                % to numerical errors; project them back to the quality 
+                % space
+                pool_pts = obj.computeQuadMin(pool_pts);
 
-            % prepare a sparse matrix containing the values of the transfer
-            % functions on the quality space
-            transfunc_mat = sparse( ...
-                obj.Storage.GlobalMin.TransFuncRows, ...
-                obj.Storage.GlobalMin.TransFuncCols, ...
-                -quality_vert_vals( ...
-                obj.Storage.GlobalMin.TransFuncIndices), ...
-                7 * tri_num, 21 * tri_num);
-
-            % compute the objectives at the candidate optimizers (note that
-            % some are invalid optimizers)
-            costfunc_mat = marg_weight * (opt_horz .^ 2 + opt_vert .^ 2 ...
-                - 2 * (opt_horz .* marg_vertices(:, 1)' ...
-                + opt_vert .* marg_vertices(:, 2)'));
-            objective_mat = transfunc_mat * KKT_coef_mat ...
-                + costfunc_mat - marg_vert_vals' - objective_const;
-
-            % check if only a single case is valid for each set of KKT
-            % conditions
-            if sum(sum(KKT_valid_mat)) == (tri_num * marg_vert_num)
-                objective_tri_min = objective_mat(KKT_valid_mat);
-                min_costs = costfunc_mat(KKT_valid_mat);
-
-                % compute the minimizers
-                min_inds = repelem((1:marg_vert_num)', tri_num, 1);
-                min_pts = [opt_horz(KKT_valid_mat), ...
-                    opt_vert(KKT_valid_mat)];
-                min_coefs = [coef1(KKT_valid_mat), ...
-                    coef2(KKT_valid_mat), coef3(KKT_valid_mat)];
-            else
-                % set the objectives of the invalid optimizers to infinity
-                objective_mat(~KKT_valid_mat) = inf;
-
-                % compute the minimum inside each triangle over the 7 cases
-                objective_mat_re = reshape(objective_mat(:), ...
-                    7, tri_num * marg_vert_num);
-                [objective_tri_min, tri_min_case_id] = ...
-                    min(objective_mat_re, [], 1);
-                objective_tri_min = objective_tri_min';
-
-                % compute the minimizers
-                min_inds = repelem((1:marg_vert_num)', tri_num, 1);
-                tri_min_lin_id = sub2ind([7 * tri_num, marg_vert_num], ...
-                    tri_min_case_id' ...
-                    + repmat((0:tri_num - 1)' * 7, marg_vert_num, 1), ...
-                    min_inds);
-                min_pts = [opt_horz(tri_min_lin_id), ...
-                    opt_vert(tri_min_lin_id)];
-                min_coefs = [coef1(tri_min_lin_id), ...
-                    coef2(tri_min_lin_id), coef3(tri_min_lin_id)];
-                min_costs = costfunc_mat(tri_min_lin_id);
+                if tri_batch_num > 1
+                    % save the results computed in this batch
+                    pool_inds_cell{batch_id} = pool_inds;
+                    pool_pts_cell{batch_id} = pool_pts;
+                    pool_testfuncs_cell{batch_id} = pool_testfuncs;
+                    pool_vals_cell{batch_id} = pool_vals;
+                    pool_costs_cell{batch_id} = pool_costs;
+                    min_val_list(batch_id) = min_val;
+                end
             end
 
-            % evaluate the simplicial test functions at all these points
-            quantity_triangles_dup = repmat(qualtity_triangles, ...
-                marg_vert_num, 1);
-            min_testfuncs = sparse(repmat((1:tri_num * marg_vert_num)', ...
-                3, 1), quantity_triangles_dup(:), min_coefs(:), ...
-                tri_num * marg_vert_num, quality_vert_num);
+            if tri_batch_num > 1
+                % aggregate the batches
+                min_inds = vertcat(pool_inds_cell{:});
+                min_pts = vertcat(pool_pts_cell{:});
+                min_testfuncs = vertcat(pool_testfuncs_cell{:});
+                min_vals = vertcat(pool_vals_cell{:});
+                min_costs = vertcat(pool_costs_cell{:});
+                min_val = min(min_val_list);
 
-            % remove (approximately) duplicate optimizers
-            [~, unique_inds] = unique(round([min_pts, min_inds], 6), ...
-                'rows', 'stable');
-            objective_tri_min = objective_tri_min(unique_inds);
-            min_costs = min_costs(unique_inds);
-            min_pts = min_pts(unique_inds, :);
-            min_inds = min_inds(unique_inds);
-            min_testfuncs = min_testfuncs(unique_inds, :);
-
-            % sort the optimizers
-            [min_vals, sorted_order] = sort(objective_tri_min, 1, ...
-                'ascend');
-            min_costs = min_costs(sorted_order);
-            min_inds = min_inds(sorted_order);
-            min_pts = min_pts(sorted_order, :);
-            min_testfuncs = min_testfuncs(sorted_order, :);
-
-            % retain up to obj.GlobalOptions.pool_size optimizers
-            pool_size = min(obj.GlobalOptions.pool_size, length(min_vals));
-            pool_inds = min_inds(1:pool_size);
-            pool_pts = min_pts(1:pool_size, :);
-            pool_testfuncs = min_testfuncs(1:pool_size, :);
-            pool_vals = min_vals(1:pool_size);
-            pool_costs = min_costs(1:pool_size);
-            min_val = pool_vals(1);
-
-            % some points may be slightly outside the quality space due to 
-            % numerical errors; project them back to the quality space
-            pool_pts = obj.computeQuadMin(pool_pts);
+                [~, unique_inds] = unique(round([min_pts, min_inds], ...
+                    6), 'rows', 'stable');
+                min_vals = min_vals(unique_inds);
+                min_costs = min_costs(unique_inds);
+                min_pts = min_pts(unique_inds, :);
+                min_inds = min_inds(unique_inds);
+                min_testfuncs = min_testfuncs(unique_inds, :);
+    
+                % sort the optimizers from the batches
+                [min_vals, sorted_order] = sort(min_vals, 1, 'ascend');
+                min_costs = min_costs(sorted_order);
+                min_inds = min_inds(sorted_order);
+                min_pts = min_pts(sorted_order, :);
+                min_testfuncs = min_testfuncs(sorted_order, :);
+    
+                pool_size = min(obj.GlobalOptions.pool_size, ...
+                    length(min_vals));
+                pool_inds = min_inds(1:pool_size);
+                pool_pts = min_pts(1:pool_size, :);
+                pool_testfuncs = min_testfuncs(1:pool_size, :);
+                pool_vals = min_vals(1:pool_size);
+                pool_costs = min_costs(1:pool_size);
+            end
 
             if obj.GlobalOptions.display
-                fprintf(['Found %3d candidates, ' ...
-                    'minimum value = %10.4f\n'], pool_size, min_val);
+                fprintf(['%s: Found %3d candidates, ' ...
+                    'minimum value = %10.4f\n'], ...
+                    class(obj), pool_size, min_val);
             end
 
             if ~isempty(obj.GlobalOptions.log_file)
                 fprintf(log_file, ...
-                    'Found %3d candidates, minimum value = %10.4f\n', ...
-                    pool_size, min_val);
+                    ['%s: Found %3d candidates, ' ...
+                    'minimum value = %10.4f\n'], ...
+                    class(obj), pool_size, min_val);
             end
 
             % close the log file
@@ -1878,7 +2156,7 @@ classdef MT2DQuad_ParTrans < MT2DQuad
                 primal_sol{marg_id} = struct;
                 primal_sol{marg_id}.Constant = ...
                     vec(obj.Storage.DeciVarInterceptIndices(marg_id)) ...
-                    + obj.Runtime.GlobalMin.MinVals(marg_id);
+                    - obj.Runtime.GlobalMin.MinVals(marg_id);
 
                 % add back the first test function for the marginal
                 primal_sol{marg_id}.Coefficients = [0; ...
@@ -1986,8 +2264,27 @@ classdef MT2DQuad_ParTrans < MT2DQuad
                 dist_mat = pdist2(cand_atoms, quality_atoms, 'euclidean');
                 quality_probs = accumarray(uind, ...
                     dual_sol.Probabilities, [quality_atom_num, 1]);
-                [coup_atoms, coup_probs, discreteOT_cost_list(marg_id)] ...
-                    = discrete_OT(cand_probs, quality_probs, dist_mat);
+
+                if size(dist_mat, 1) * size(dist_mat, 2) > 1e6
+                    % if there are too many atoms in the discrete measures,
+                    % a direct computation of discrete OT may cause memory
+                    % throttling; thus, we resort to a constraint
+                    % generation scheme
+                    cp_options = struct('display', false);
+                    OT = OTDiscrete(cand_probs, quality_probs, ...
+                        dist_mat, cp_options);
+                    [hcoup_indices, ~] = ...
+                        OT.generateHeuristicCoupling();
+                    OT.run(hcoup_indices, 1e-6);
+                    coup = OT.Runtime.DualSolution;
+                    coup_atoms = coup.CoupIndices;
+                    coup_probs = coup.Probabilities;
+                    discreteOT_cost_list(marg_id) = -OT.Runtime.LSIP_LB;
+                else
+                    [coup_atoms, coup_probs, ...
+                        discreteOT_cost_list(marg_id)] ...
+                        = discrete_OT(cand_probs, quality_probs, dist_mat);
+                end
                 
                 % construct the sparse matrix representing the coupling
                 % between the candidate discrete measure and this discrete

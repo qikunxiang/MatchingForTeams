@@ -2,6 +2,12 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
     % Abstract class for probability measures supported within a convex
     % polytope
 
+    properties(Constant)
+        % numerical tolerance for deciding whether a point is inside a
+        % polytope
+        INSIDE_TOLERANCE = 1e-12;
+    end
+
     properties(SetAccess = protected, GetAccess = public)
         % struct storing information about the support of the probability
         % measure
@@ -14,9 +20,6 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
         % struct storing information about rejection sampling from this
         % probability measure
         RejSamp;
-
-        % whether the measure has been coupled with a discrete measure
-        Coupled = false;
 
         % struct storing information about the optimal transference plan
         % and the way to sample from the conditional measure
@@ -127,7 +130,7 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
                     batch_samp_num, rand_stream);
 
                 % compute the acceptance probabilities
-                accept_probs = obj.RejSamp.AcceptProbFunc(raw_samps);
+                accept_probs = obj.rejSampAcceptProbFunction(raw_samps);
 
                 % the list of samples accepted
                 accepted = rand(rand_stream, batch_samp_num, 1) ...
@@ -149,7 +152,7 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
 
         function [OT_weights, OT_cost, OT_output] ...
                 = computeOptimalTransport(obj, atoms, probs, angle_num, ...
-                optim_options)
+                init_weights, pp_angle_indices, optim_options)
             % Compute the semi-discrete optimal transport
             % Inputs:
             %   atoms: two-column matrix containing the locations of the
@@ -158,6 +161,10 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
             %   the discrete measure
             %   angle_num: number of angles used in the integration
             %   (default is 1e4)
+            %   init_weights: the initial weights in the optimization
+            %   (default is the all-zero vector)
+            %   pp_angle_indices: indices of the angles used in
+            %   post-processing (default is all indices)
             %   optim_options: struct containing options used in the
             %   optimization
             % Outputs:
@@ -173,98 +180,105 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
                 angle_num = 1e4;
             end
 
-            atom_num = size(atoms, 1);
-
-            % pre-process the quantities
-            obj.prepareOptimalTransport(atoms, probs, angle_num);
-            
-            options = optimoptions('fminunc', 'Display', 'none', ...
-                'Algorithm', 'quasi-newton', ...
-                'SpecifyObjectiveGradient', true, ...
-                'MaxFunctionEvaluations', 1e5, ...
-                'MaxIterations', 1e5, ...
-                'FunctionTolerance', 0, ...
-                'StepTolerance', 0, ...
-                'OptimalityTolerance', 1e-5);
-
-            % set the additional optimization options
-            if exist('optim_options', 'var') && ~isempty(optim_options)
-                optim_fields = fieldnames(optim_options);
-                optim_values = struct2cell(optim_options);
-
-                for f_id = 1:length(optim_fields)
-                    options.(optim_fields{f_id}) = optim_values{f_id};
-                end
+            if ~exist('pp_angle_indices', 'var') ...
+                    || isempty(pp_angle_indices)
+                pp_angle_indices = (1:angle_num)';
             end
 
-            OT_obj_func = @(w)(obj.evaluateOTMinObjective(w));
+            atom_num = size(atoms, 1);
 
-            % call fminunc to optimize the weights
-            
-            % maximum number of trials
-            rand_stream = RandStream('combRecursive', 'Seed', 5555);
-            max_trial = 10;
-            trial_counter = 0;
-            OT_weights = zeros(atom_num - 1, 1);
-            perterbation = zeros(atom_num - 1, 1);
+            if ~exist('init_weights', 'var') || isempty(init_weights)
+                init_weights = zeros(atom_num - 1, 1);
+            end
 
-            while trial_counter < max_trial
+            % the multiplier increases the angle number when numerical
+            % issues arise
+            angle_num_multiplier = 1;
+
+            while true
+                angle_num_rt = angle_num * angle_num_multiplier;
+                angle_list_rt = linspace(0, 2 * pi, angle_num_rt)';
+                pp_angle_indices_rt = (pp_angle_indices - 1) ...
+                    * angle_num_multiplier + 1;
+
+                % pre-process the quantities
+                obj.prepareOptimalTransport(atoms, probs, angle_list_rt);
+                
+                options = optimoptions('fminunc', 'Display', 'none', ...
+                    'Algorithm', 'quasi-newton', ...
+                    'SpecifyObjectiveGradient', true, ...
+                    'MaxFunctionEvaluations', 1e5, ...
+                    'MaxIterations', 1e5, ...
+                    'FunctionTolerance', 0, ...
+                    'StepTolerance', 0, ...
+                    'OptimalityTolerance', 1e-5);
+    
+                % set the additional optimization options
+                if exist('optim_options', 'var') && ~isempty(optim_options)
+                    optim_fields = fieldnames(optim_options);
+                    optim_values = struct2cell(optim_options);
+    
+                    for f_id = 1:length(optim_fields)
+                        options.(optim_fields{f_id}) = optim_values{f_id};
+                    end
+                end
+    
+                OT_obj_func = @(w)(obj.evaluateOTMinObjective(w));
+    
                 OT_output = struct;
                 [OT_weights, objective_min, OT_output.exitflag, ...
                     OT_output.optim_output, OT_output.final_grad] ...
-                    = fminunc(OT_obj_func, OT_weights + perterbation, ...
-                    options);
+                    = fminunc(OT_obj_func, init_weights, options);
                 OT_cost = -objective_min;
-                trial_counter = trial_counter + 1;
     
-                if OT_output.exitflag ~= 1
-                    warning(['optimization solver stopped when the ' ...
-                        'first-order condition fails']);
+                if OT_output.exitflag == 1
+                    obj.OT.Coupled = true;
+                    obj.OT.Weights = [0; OT_weights];
+                    obj.OT.Cost = OT_cost;
 
-                    % retry with the current weights plus a small random
-                    % perturbation
-                    perterbation = randn(rand_stream, atom_num - 1, 1) ...
-                        * 1e-4;
-                else
+                    % call post-processing function
+                    obj.postProcessOptimalTransport(pp_angle_indices_rt);
+
                     break;
                 end
+
+                warning(['optimization solver stopped when the ' ...
+                    'first-order condition fails']);
+
+                % double the number of angles for numerical integration and
+                % try again
+                angle_num_multiplier = angle_num_multiplier * 2;
             end
-
-            obj.OT.Weights = [0; OT_weights];
-            obj.OT.Cost = OT_cost;
-            obj.Coupled = true;
-
-            % call post-processing function
-            obj.postProcessOptimalTransport();
         end
 
-        function setOTWeights(obj, atoms, probs, OT_weights, OT_cost, ...
-                angle_num)
-            % Set the pre-computed optimal transport weights and cost
-            % Inputs:
-            %   atoms: two-column matrix containing the locations of the
-            %   atoms in the discrete measure
-            %   probs: vector containing the probabilities of the atoms in
-            %   the discrete measure
-            %   OT_weights: the optimized weights in the Laguerre diagram
-            %   OT_cost: the optimal transport cost
-            %   angle_num: number of angles used in the Laguerre diagram
-            %   (default is 1e4)
+        function info = saveOptimalTransportInfo(obj)
+            % Save optimal transport related information in a struct that
+            % can be used later
+            % Output:
+            %   info: struct that copies the fields from obj.OT
 
-            if ~exist('angle_num', 'var') || isempty(angle_num)
-                angle_num = 1e4;
-            end
+            info = struct;
+            info.atoms = obj.OT.DiscMeas.Atoms;
+            info.probs = obj.OT.DiscMeas.Probs;
+            info.angle_list = obj.OT.Prep.angle_list;
+            info.weights = obj.OT.Weights;
+            info.cost = obj.OT.Cost;
+            info.condrejsamp = obj.OT.CondRejSamp;
+        end
 
-            % pre-process the quantities
-            obj.prepareOptimalTransport(atoms, probs, angle_num);
+        function loadOptimalTransportInfo(obj, info)
+            % Load optimal transport related information from a previously
+            % saved struct
+            % Input:
+            %   info: struct that will be copied to the fields of obj.OT
 
-            obj.OT.Weights = OT_weights;
-            obj.OT.Cost = OT_cost;
-            obj.Coupled = true;
+            obj.prepareOptimalTransport(info.atoms, info.probs, ...
+                info.angle_list);
 
-            % call post-processing function to compute additional
-            % quantities
-            obj.postProcessOptimalTransport();
+            obj.OT.Weights = info.weights;
+            obj.OT.Cost = info.cost;
+            obj.OT.CondRejSamp = info.condrejsamp;
+            obj.OT.Coupled = true;
         end
 
         function testOTObjective(obj, atoms, probs, angle_num, ...
@@ -290,8 +304,10 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
 
             atom_num = size(atoms, 1);
 
+            angle_list = linspace(0, 2 * pi, angle_num)';
+
             % pre-process the quantities
-            obj.prepareOptimalTransport(atoms, probs, angle_num);
+            obj.prepareOptimalTransport(atoms, probs, angle_list);
 
             % the objective value and gradient computed by the integration
             % in the polar coordinates
@@ -301,7 +317,7 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
 
             % approximate the probability measure with a discrete measure
             % supported on the grid
-            grid_density = obj.Dens.Func([grid_x(:), grid_y(:)]);
+            grid_density = obj.densityFunction([grid_x(:), grid_y(:)]);
             grid_density = grid_density / sum(grid_density);
 
             weighted_dist = sqrt((grid_x(:) - atoms(:, 1)') .^ 2 ...
@@ -352,8 +368,10 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
 
             atom_num = size(atoms, 1);
 
+            angle_list = linspace(0, 2 * pi, angle_num);
+
             % pre-process the quantities
-            obj.prepareOptimalTransport(atoms, probs, angle_num);
+            obj.prepareOptimalTransport(atoms, probs, angle_list);
 
             % the objective value and gradient computed by the integration
             % in the polar coordinates
@@ -380,27 +398,60 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
         end
 
         function [x, y, rho] = computeLaguerreDiagram(obj, ...
-                anchors, angle_num, weights)
+                anchors, weights, angle_num)
             % Compute the contour of each cell in the Laguerre diagram with
             % given weights
             % Inputs: 
-            %   atoms: two-column matrix containing the locations of the
+            %   anchors: two-column matrix containing the locations of the
             %   anchor points
+            %   weights: weights in the Laguerre diagram
             %   angle_num: number of angles used in the integration
             %   (default is 1e4)
-            %   weights: weights in the Laguerre diagram
+            % Outputs:
+            %   x: matrix containing the x-coordinates of the points 
+            %   describing the Laguerre cells; each column represents a 
+            %   cell
+            %   y: matrix containing the y-coordinates of the points 
+            %   describing the Laguerre cells; each column represents a 
+            %   cell
+            %   rho: matrix containing the distances from the anchor point
+            %   to the points describing Laguerre cells; each column
+            %   represents a cell
 
             if ~exist('angle_num', 'var') || isempty(angle_num)
                 angle_num = 1e4;
             end
 
             anchor_num = size(anchors, 1);
-            probs = ones(anchor_num, 1) / anchor_num;
 
             % pre-process the quantities
-            obj.prepareOptimalTransport(anchors, probs, angle_num);
+            angle_list = linspace(0, 2 * pi, angle_num)';
 
-            [x, y, rho] = obj.doComputeLaguerreDiagram(weights);
+            assert(all(obj.checkIfInsideSupport(anchors)), ...
+                'some atoms are outside the support of the measure');
+
+
+            % prepare information related to the hyperbolas
+            hyp = ProbMeas2D_ConvexPolytope.hyperbolaPreprocess(anchors);
+
+            % prepare information related to the linear boundaries
+            lin = ProbMeas2D_ConvexPolytope.linePreprocess( ...
+                anchors, obj.Supp.Hyperplane.w, obj.Supp.Hyperplane.b);
+
+            rho = zeros(angle_num, anchor_num);
+
+            hyp_a = (weights - weights') / 2;
+
+            for anchor_id = 1:anchor_num
+                rho(:, anchor_id) ...
+                    = hyperbolic_Dirichlet_tessellation_polar( ...
+                    angle_list, hyp_a(:, anchor_id), ...
+                    hyp.c(:, anchor_id), hyp.intercept(:, anchor_id), ...
+                    lin{anchor_id}.c, lin{anchor_id}.intercept);
+            end
+
+            x = anchors(:, 1)' + rho .* cos(angle_list);
+            y = anchors(:, 2)' + rho .* sin(angle_list);
         end
 
         function samp_cell = conditionalRandSample(obj, ...
@@ -421,7 +472,7 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
                 rand_stream = RandStream.getGlobalStream;
             end
 
-            if ~obj.Coupled
+            if ~isfield(obj.OT, 'Coupled') || ~obj.OT.Coupled
                 error('must set the coupled discrete measure first');
             end
 
@@ -450,7 +501,7 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
 
                     % compute the acceptance probabilities
                     accept_probs = ...
-                        obj.OT.CondRejSamp{atom_id}.AcceptProbFunc( ...
+                        obj.condRejSampAcceptProbFunction(atom_id, ...
                         raw_samps);
 
                     if any(accept_probs > 1)
@@ -498,7 +549,7 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
                 rand_stream = RandStream.getGlobalStream;
             end
 
-            if ~obj.Coupled
+            if ~isfield(obj.OT, 'Coupled') || ~obj.OT.Coupled
                 error('must set the coupled discrete measure first');
             end
 
@@ -609,7 +660,7 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
 
             % approximate the probability measure with a discrete measure
             % supported on the grid
-            grid_density = obj.Dens.Func(grid_pts);
+            grid_density = obj.densityFunction(grid_pts);
             grid_density = grid_density / sum(grid_density);
 
             % only retain points that are inside the support
@@ -654,8 +705,92 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
         end
     end
 
+    methods(Static, Access = protected)
+        function hyp = hyperbolaPreprocess(anchors)
+            % Computes quantities for the polar representations of
+            % hyperbolas where the foci are among the given anchor points.
+            % Input:
+            %   anchors: two-column matrix containing the locations of the
+            %   anchor points
+            % Output:
+            %   hyp: struct with fields intercept and c which stores
+            %   information about the polar representations of hyperbolas
+
+            % column i contains x(i) - x
+            diff_x = anchors(:, 1)' - anchors(:, 1);
+            diff_y = anchors(:, 2)' - anchors(:, 2);
+
+            hyp = struct;
+
+            % rotation angle (in radian) in order to transform each
+            % hyperbola into its canonical orientation 
+            hyp.intercept = atan(diff_y ./ diff_x);
+            flip_list = anchors(:, 1)' < anchors(:, 1);
+            hyp.intercept(flip_list) = hyp.intercept(flip_list) + pi;
+
+            % distance between two foci (same as the pairwise distance
+            % matrix for the anchors points) divided by 2
+            hyp.c = sqrt(diff_x .^ 2 + diff_y .^ 2) / 2;
+        end
+
+        function lin = linePreprocess(anchors, hp_w, hp_b)
+            % Computes polar representations of the characterizing
+            % hyperplanes of a convex polytope using each of the anchor
+            % points as origin. The representation expresses each
+            % characterizing hyperplane (which is a straight line) as a
+            % line parallel to the x-axis (i.e., y = c) rotated by an angle
+            % (in radian).
+            % Inputs: 
+            %   anchors: two-column matrix containing the locations of the
+            %   anchor points
+            %   hp_w: two-column matrix containing the weight vectors of
+            %   the characterizing hyperplanes
+            %   hp_b: vector containing the intercepts of the
+            %   characterizing hyperplanes
+            % Output:
+            %   lin: cell array containing structs with fields intercept
+            %   and c describing the polar representations
+
+            % shifting the hyperplanes such that an anchor point is the new
+            % origin; this only changes the intercepts of the hyperplanes
+            hp_b_shifted = hp_b - hp_w * anchors';
+
+            % some anchor points may lie on the wrong side of a hyperplane 
+            % due to small numerical inaccuracies; set these atoms to be on
+            % the hyperplane
+            closeto0_list = hp_b_shifted < 0 & hp_b_shifted > -1e-13;
+            hp_b_shifted(closeto0_list) = 0;
+
+            % iterate through the anchor points
+            anchor_num = size(anchors, 1);
+
+            % cell array where each cell corresponds to an anchor point; 
+            % each cell contains a struct with fields c and intercept which
+            % are vectors representing the characterizing hyperplanes in 
+            % polar coordinates using the anchor point as the origin 
+            lin = cell(anchor_num, 1);
+
+            for anchor_id = 1:anchor_num
+                % adjust the signs of the weight vector and the intercept
+                % such that the intercept is always positive
+                hyp_b_sign_list = (hp_b_shifted(:, anchor_id) >= 0) ...
+                    * 2 - 1;
+                hyp_b_adjusted = hp_b_shifted(:, anchor_id) ...
+                    .* hyp_b_sign_list;
+                hyp_w_adjusted = hp_w .* hyp_b_sign_list;
+
+                lin{anchor_id} = struct;
+                lin{anchor_id}.c = hyp_b_adjusted ...
+                    ./ sqrt(sum(hyp_w_adjusted .^ 2, 2));
+                lin{anchor_id}.intercept = -atan(hyp_w_adjusted(:, 1) ...
+                    ./ hyp_w_adjusted(:, 2)) ...
+                    + pi * (hyp_w_adjusted(:, 2) < 0);
+            end
+        end
+    end
+
     methods(Access = protected)
-        function prepareOptimalTransport(obj, atoms, probs, angle_num)
+        function prepareOptimalTransport(obj, atoms, probs, angle_list)
             % Prepare quantities for the computation of semi-discrete
             % optimal transport.
             % Inputs:
@@ -663,9 +798,8 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
             %   atoms in the discrete measure
             %   probs: vector containing the probabilities of the atoms in
             %   the discrete measure
-            %   angle_num: number of angles used in the integration
-
-            angle_list = linspace(0, 2 * pi, angle_num)';
+            %   angle_list: vector containing angles used in the 
+            %   integration
 
             assert(all(obj.checkIfInsideSupport(atoms)), ...
                 'some atoms are outside the support of the measure')
@@ -674,85 +808,16 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
             obj.OT.Prep = struct('angle_list', angle_list);
 
             % prepare information related to the hyperbolas
-            obj.hyperbolaPreprocess();
+            obj.OT.Prep.hyp = ...
+                ProbMeas2D_ConvexPolytope.hyperbolaPreprocess(atoms);
 
             % prepare information related to the linear boundaries
-            obj.linePreprocess();
-        end
-        
-        function hyperbolaPreprocess(obj)
-            % Computes quantities for the polar representations of
-            % hyperbolas where the foci are among the given anchor points.
-
-            % column i contains x(i) - x
-            diff_x = obj.OT.DiscMeas.Atoms(:, 1)' ...
-                - obj.OT.DiscMeas.Atoms(:, 1);
-            diff_y = obj.OT.DiscMeas.Atoms(:, 2)' ...
-                - obj.OT.DiscMeas.Atoms(:, 2);
-
-            obj.OT.Prep.hyp = struct;
-
-            % rotation angle (in radian) in order to transform each
-            % hyperbola into its canonical orientation 
-            obj.OT.Prep.hyp.intercept = atan(diff_y ./ diff_x);
-            flip_list = obj.OT.DiscMeas.Atoms(:, 1)' ...
-                < obj.OT.DiscMeas.Atoms(:, 1);
-            obj.OT.Prep.hyp.intercept(flip_list) ...
-                = obj.OT.Prep.hyp.intercept(flip_list) + pi;
-
-            % distance between two foci (same as the pairwise distance
-            % matrix for the anchors points) divided by 2
-            obj.OT.Prep.hyp.c = sqrt(diff_x .^ 2 + diff_y .^ 2) / 2;
+            obj.OT.Prep.lin = ProbMeas2D_ConvexPolytope.linePreprocess( ...
+                atoms, obj.Supp.Hyperplane.w, obj.Supp.Hyperplane.b);
         end
 
-        function linePreprocess(obj)
-            % Computes polar representations of the characterizing
-            % hyperplanes of a convex polytope using each of the anchor
-            % points as origin. The representation expresses each
-            % characterizing hyperplane (which is a straight line) as a
-            % line parallel to the x-axis (i.e., y = c) rotated by an angle
-            % (in radian).
-
-            % shifting the hyperplanes such that an anchor point is the new
-            % origin; this only changes the intercepts of the hyperplanes
-            hyp_b_shifted = obj.Supp.Hyperplane.b ...
-                - obj.Supp.Hyperplane.w * obj.OT.DiscMeas.Atoms';
-
-            % some atoms may lie on the wrong side of a hyperplane due to
-            % small numerical inaccuracies; set these atoms to be on the
-            % hyperplane
-            closeto0_list = hyp_b_shifted < 0 & hyp_b_shifted > -1e-13;
-            hyp_b_shifted(closeto0_list) = 0;
-
-            % iterate through the anchor points
-            atom_num = size(obj.OT.DiscMeas.Atoms, 1);
-
-            % cell array where each cell corresponds to an atom in the
-            % discrete measure; each cell contains a struct with fields c
-            % and intercept which are vectors representing the
-            % characterizing hyperplanes in polar coordinates using the
-            % atom as the origin 
-            obj.OT.Prep.lin = cell(atom_num, 1);
-
-            for atom_id = 1:atom_num
-                % adjust the signs of the weight vector and the intercept
-                % such that the intercept is always positive
-                hyp_b_sign_list = (hyp_b_shifted(:, atom_id) >= 0) * 2 - 1;
-                hyp_b_adjusted = hyp_b_shifted(:, atom_id) ...
-                    .* hyp_b_sign_list;
-                hyp_w_adjusted = obj.Supp.Hyperplane.w .* hyp_b_sign_list;
-
-                obj.OT.Prep.lin{atom_id} = struct;
-                obj.OT.Prep.lin{atom_id}.c = hyp_b_adjusted ...
-                    ./ sqrt(sum(hyp_w_adjusted .^ 2, 2));
-                obj.OT.Prep.lin{atom_id}.intercept ...
-                    = -atan(hyp_w_adjusted(:, 1) ...
-                    ./ hyp_w_adjusted(:, 2)) ...
-                    + pi * (hyp_w_adjusted(:, 2) < 0);
-            end
-        end
-
-        function [val, grad] = evaluateOTMinObjective(obj, OT_weights)
+        function [val, grad] = evaluateOTMinObjective(obj, OT_weights, ...
+                batch_size)
             % The objective function of the minimization problem when
             % solving semi-discrete optimal transport (OT) problem.
             % Inputs:
@@ -761,9 +826,15 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
             %   (the first weight is set to 0 for identification purpose,
             %   and thus the input here corresponds to the second weight
             %   onwards)
+            %   batch_size: the maximum number of angles to be handled in
+            %   the vectorized procedure (default is 1e4)
             % Outputs:
             %   val: the computed objective value
             %   grad: the computed gradient of the objective function
+
+            if ~exist('batch_size', 'var') || isempty(batch_size)
+                batch_size = 1e4;
+            end
 
             % add back the first weight
             OT_weights = [0; OT_weights];
@@ -772,26 +843,37 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
             atom_num = size(obj.OT.DiscMeas.Atoms, 1);
             hyp_a = OTweights_half - OTweights_half';
 
+            angle_list = obj.OT.Prep.angle_list;
+            angle_num = length(angle_list);
+            batch_num = ceil(angle_num / batch_size);
+
             int1 = zeros(atom_num, 1);
             int2 = zeros(atom_num, 1);
 
             for atom_id = 1:atom_num
-                % use the polar coordinate representation to compute the
-                % upper integration limits for the inner integral
-                upper_limits = hyperbolic_Dirichlet_tessellation_polar( ...
-                    obj.OT.Prep.angle_list, hyp_a(:, atom_id), ...
-                    obj.OT.Prep.hyp.c(:, atom_id), ...
-                    obj.OT.Prep.hyp.intercept(:, atom_id), ...
-                    obj.OT.Prep.lin{atom_id}.c, ...
-                    obj.OT.Prep.lin{atom_id}.intercept);
+                for batch_id = 1:batch_num
+                    batch_indices = ((batch_id - 1) * batch_size ...
+                        + 1):min(batch_id * batch_size, angle_num);
+                    angle_batch = angle_list(batch_indices);
 
-                % evaluate the outer integral via the Trapezoidal rule
-                [inner1, inner2] = obj.computeInnerIntegral(atom_id, ...
-                    upper_limits);
+                    % use the polar coordinate representation to compute 
+                    % the upper integration limits for the inner integral
+                    upper_limits = ...
+                        hyperbolic_Dirichlet_tessellation_polar( ...
+                        angle_batch, hyp_a(:, atom_id), ...
+                        obj.OT.Prep.hyp.c(:, atom_id), ...
+                        obj.OT.Prep.hyp.intercept(:, atom_id), ...
+                        obj.OT.Prep.lin{atom_id}.c, ...
+                        obj.OT.Prep.lin{atom_id}.intercept);
 
-                int_vals = trapz(obj.OT.Prep.angle_list, [inner1, inner2]);
-                int1(atom_id) = int_vals(1);
-                int2(atom_id) = int_vals(2);
+                    % evaluate the outer integral via the Trapezoidal rule
+                    [inner1, inner2] = obj.computeInnerIntegral( ...
+                        atom_id, batch_indices, upper_limits);
+
+                    int_vals = trapz(angle_batch, [inner1, inner2]);
+                    int1(atom_id) = int1(atom_id) + int_vals(1);
+                    int2(atom_id) = int2(atom_id) + int_vals(2);
+                end
             end
 
             val = -(OT_weights' * obj.OT.DiscMeas.Probs) ...
@@ -800,45 +882,6 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
 
             % the gradient wrt the first weight is discarded
             grad = grad(2:end);
-        end
-
-        function [x, y, rho] = doComputeLaguerreDiagram(obj, weights)
-            % Function that actually computes the Laguerre diagram given
-            % weights
-            % Input:
-            %   weights: weights in the Laguerre diagram
-            %   full_info: boolean indicating whether to request full
-            %   distance information (default is false)
-            % Outputs:
-            %   x: matrix in which each column contains the x-coordinates
-            %   of the contour line of a cell in the Laguerre diagram
-            %   y: matrix in which each column contains the y-coordinates
-            %   of the contour line of a cell in the Laguerre diagram
-            %   rho: matrix in which each column contains the distance from
-            %   the anchor point in each cell in the Laguerre diagram
-
-            atom_num = size(obj.OT.DiscMeas.Atoms, 1);
-            angle_num = length(obj.OT.Prep.angle_list);
-
-            rho = zeros(angle_num, atom_num);
-
-            hyp_a = (weights - weights') / 2;
-
-            for atom_id = 1:atom_num
-                rho(:, atom_id) ...
-                    = hyperbolic_Dirichlet_tessellation_polar( ...
-                    obj.OT.Prep.angle_list, ...
-                    hyp_a(:, atom_id), ...
-                    obj.OT.Prep.hyp.c(:, atom_id), ...
-                    obj.OT.Prep.hyp.intercept(:, atom_id), ...
-                    obj.OT.Prep.lin{atom_id}.c, ...
-                    obj.OT.Prep.lin{atom_id}.intercept);
-            end
-
-            x = obj.OT.DiscMeas.Atoms(:, 1)' ...
-                + rho .* cos(obj.OT.Prep.angle_list);
-            y = obj.OT.DiscMeas.Atoms(:, 2)' ...
-                + rho .* sin(obj.OT.Prep.angle_list);
         end
 
         function [vals, inside] = doEvaluateSimplicialTestFuncs(obj, pts)
@@ -865,7 +908,8 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
                 * [pts'; ones(1, input_num)];
 
             % allow a small tolerance to avoid numerical precision issues
-            inside = reshape(all(reshape(sparse(coef_mat(:) > -1e-12), ...
+            inside = reshape(all(reshape(sparse(coef_mat(:) ...
+                > -ProbMeas2D_ConvexPolytope.INSIDE_TOLERANCE), ...
                 3, tri_num * input_num), 1), tri_num, input_num)';
 
             % normalize the matrix such that each row sums up to 1; this is
@@ -897,6 +941,15 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
         end
     end
 
+    methods(Abstract, Access = public)
+        % Probability density function
+        dens = densityFunction(obj, pts);
+
+        % Fix small numerical inaccuracies in the points such that points
+        % that are slightly outside the support are moved into the support
+        pts_san = sanitizePoints(obj, pts, tolerance);
+    end
+
     methods(Abstract, Access = protected)
         % Check if the input points are inside the support of the
         % probability measure
@@ -907,11 +960,16 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
         raw_samps = sampleFromProposalDistribution(obj, samp_num, ...
             rand_stream);
 
+        % Computes the acceptance probability when using rejection sampling
+        % to generate independent samples from the probability measure
+        accept_probs = rejSampAcceptProbFunction(obj, raw_samps);
+
         % Evaluates inner integrals along a list of angles in the polar
         % coordinate system. The integrands are r -> r * p(r) and
         % r -> r^2 * p(r) where p(r) denotes the probability density
         % function.
-        [val1, val2] = computeInnerIntegral(obj, atom_id, upper_limits)
+        [val1, val2] = computeInnerIntegral(obj, atom_id, ...
+            angle_indices, upper_limits)
 
         % Generate random samples from a proposal distribution for
         % conditional rejection sampling. For this procedure, the proposal
@@ -921,7 +979,8 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
 
         % Compute the acceptance probability in conditional rejection
         % sampling from a cell
-        accept_probs = computeCondAcceptProb(obj, atom_id, raw_samps);
+        accept_probs = condRejSampAcceptProbFunction(obj, atom_id, ...
+            raw_samps);
 
         % Function that initializes the test functions with respect to a 
         % simplicial cover and computes the integrals of the test functions 
@@ -931,7 +990,7 @@ classdef (Abstract) ProbMeas2D_ConvexPolytope < handle
         % Post-processing after computing semi-discrete optimal transport 
         % including computing the contour of each cell in the Laguerre 
         % diagram and preparing for conditional rejection sampling
-        postProcessOptimalTransport(obj);
+        postProcessOptimalTransport(obj, pp_angle_indices);
     end
 end
 

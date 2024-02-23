@@ -3,6 +3,12 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
     % marginals, two-dimensional quality space, and quadratic cost 
     % functions. 
 
+    properties(Constant)
+        % numerical tolerance for deciding whether a point is inside a
+        % polytope
+        INSIDE_TOLERANCE = 1e-12;
+    end
+
     properties(GetAccess = public, SetAccess = protected)
         % cell array containing the marginals
         Marginals;
@@ -12,6 +18,10 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
 
         % struct containing information about the quality space
         Quality;
+
+        % constant part of the quadratic cost functions that does not
+        % affect the matching
+        QuadraticConstant = 0;
     end
 
     methods(Access = public)
@@ -37,9 +47,19 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
             if ~isfield(obj.Options.OT, 'angle_num') ...
                     || isempty(obj.Options.OT.angle_num)
                 obj.Options.OT.angle_num = [];
-            elseif isscalar(isempty(obj.Options.OT.angle_num))
+            elseif isscalar(obj.Options.OT.angle_num)
                 obj.Options.OT.angle_num = ones(length(weights), 1) ...
                     * obj.Options.OT.angle_num;
+            end
+
+            if ~isfield(obj.Options.OT, 'pp_angle_indices') ...
+                    || isempty(obj.Options.OT.pp_angle_indices)
+                obj.Options.OT.pp_angle_indices = repmat({[]}, ...
+                    length(weights), 1);
+            elseif ~iscell(obj.Options.OT.pp_angle_indices)
+                obj.Options.OT.pp_angle_indices = ...
+                    repmat({obj.Options.OT.pp_angle_indices}, ...
+                    length(weights), 1);
             end
 
             if ~isfield(obj.Options.OT, 'optimization_options')
@@ -74,7 +94,8 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
                 obj.Options.reduce.max_iter = inf;
             end
 
-            assert(length(marginals) == length(weights), ...
+            marg_num = length(weights);
+            assert(length(marginals) == marg_num, ...
                 'input mis-specified');
             assert(abs(sum(weights) - 1) < 1e-12, ...
                 'weights do not sum up to 1');
@@ -84,6 +105,18 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
 
             obj.Marginals = marginals;
             obj.MarginalWeights = weights;
+
+            % compute the constant terms in the cost functions that are
+            % related to the quadratic expectation with respect to the
+            % marginals
+            quad_consts = zeros(marg_num, 1);
+
+            for marg_id = 1:marg_num
+                quad_consts(marg_id) = sum(diag( ...
+                    obj.Marginals{marg_id}.SecondMomentMat));
+            end
+
+            obj.QuadraticConstant = quad_consts' * obj.MarginalWeights;
 
             obj.Quality = struct;
             poly_num = length(quality_cell);
@@ -317,14 +350,13 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
             obj.Runtime.LSIP_LB = LSIP_LB;
         end
 
-        function weights_cell = performReassembly(obj)
+        function OT_info_cell = performReassembly(obj)
             % Perform reassembly by computing semi-discrete optimal
             % transport
             % Output:
-            %   weights_cell: cell array where each cell is a cell array
-            %   containing the weights and the cost of the semi-discrete
-            %   optimal transport between a marginal and its discrete
-            %   approximation as well as the corresponding cost
+            %   OT_info_cell: cell array where each cell is a cell array
+            %   containing optimal transport-related information that can
+            %   be saved and loaded later
 
             % open the log file
             if ~isempty(obj.Options.log_file)
@@ -347,11 +379,14 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
                     marg_angle_num = obj.Options.OT.angle_num(marg_id);
                 end
 
+                marg_pp_angle_indices = ...
+                    obj.Options.OT.pp_angle_indices{marg_id};
+
                 marg_options ...
                     = obj.Options.OT.optimization_options{marg_id};
 
                 % the atoms and the corresponding probabilities of the
-                % discretized marginal is exactly given by the test
+                % discretized marginal are exactly given by the test
                 % functions and their respective integrals; this is only
                 % valid due to the quadratic structure of the cost function
                 marg = obj.Marginals{marg_id};
@@ -359,16 +394,19 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
                 marg_probs = marg.SimplicialTestFuncs.Integrals;
 
                 marg.computeOptimalTransport(marg_atoms, marg_probs, ...
-                    marg_angle_num, marg_options);
+                    marg_angle_num, [], marg_pp_angle_indices, ...
+                    marg_options);
 
                 if obj.Options.display
-                    fprintf('SemiDiscreteOT: marginal %d done\n', marg_id);
+                    fprintf('%s: marginal %d done\n', ...
+                        class(obj), marg_id);
                 end
 
                 % logging
                 if ~isempty(obj.Options.log_file)
                     fprintf(log_file, ...
-                        'SemiDiscreteOT: marginal %d done\n', marg_id);
+                        '%s: marginal %d done\n', ...
+                        class(obj), marg_id);
                 end
             end
 
@@ -381,54 +419,47 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
 
             obj.Storage.OTComputed = true;
 
-            weights_cell = obj.getSemiDiscreteOTWeights();
+            OT_info_cell = obj.saveOptimalTransportInfo();
         end
 
-        function weights_cell = getSemiDiscreteOTWeights(obj)
-            % Retrieve computed semi-discrete optimal transport weights for
-            % the marginals
+        function OT_info_cell = saveOptimalTransportInfo(obj)
+            % Retrieve computed semi-discrete optimal transport-related
+            % information of each marginal
             % Output:
-            %   weights_cell: cell array where each cell is a cell array
-            %   containing the weights and the cost of the semi-discrete
-            %   optimal transport between a marginal and its discrete
-            %   approximation as well as the corresponding cost
+            %   OT_info_cell: cell array where each cell is a cell array
+            %   containing optimal transport-related information that can
+            %   be saved and loaded later
 
             marg_num = length(obj.MarginalWeights);
-            weights_cell = cell(marg_num, 1);
+            OT_info_cell = cell(marg_num, 1);
 
             for marg_id = 1:marg_num
                 marg = obj.Marginals{marg_id};
-                weights_cell{marg_id} = {marg.OT.Weights; marg.OT.Cost};
+                OT_info_cell{marg_id} = marg.saveOptimalTransportInfo();
             end
         end
-    
-        function setSemiDiscreteOTWeights(obj, weights_cell)
-            % Set pre-computed semi-discrete optimal transport weights for
-            % the marginals
+
+        function loadOptimalTransportInfo(obj, OT_info_cell)
+            % Load semi-discrete optimal transport-related information into
+            % each marginal
             % Input:
-            %   weights_cell: cell array where each cell is a cell array
-            %   containing the weights and the cost of the semi-discrete
-            %   optimal transport between a marginal and its discrete
-            %   approximation as well as the corresponding cost
+            %   OT_info_cell: cell array where each cell is a cell array
+            %   containing optimal transport-related information that can
+            %   be saved and loaded later
 
             marg_num = length(obj.MarginalWeights);
 
             for marg_id = 1:marg_num
                 marg = obj.Marginals{marg_id};
-                obj.Marginals{marg_id}.setOTWeights( ...
-                    marg.SimplicialTestFuncs.Vertices, ...
-                    marg.SimplicialTestFuncs.Integrals, ...
-                    weights_cell{marg_id}{1}, ...
-                    weights_cell{marg_id}{2}, ...
-                    obj.Options.OT.angle_num);
+                marg.loadOptimalTransportInfo(OT_info_cell{marg_id});
             end
 
             obj.Storage.OTComputed = true;
         end
     
-        function [UB_disc_list, UB_cont_list, samps] ...
+        function [UB_disc_list, UB_cont_list, samps, samp_histpdf] ...
                 = getMTUpperBoundsWRepetition(obj, samp_num, rep_num, ...
-                rand_stream, batch_size)
+                rand_stream, batch_size, hist_edge_x, hist_edge_y)
             % Compute two upper bounds for the matching for teams problem 
             % with repetition of Monte Carlo integration.
             % Inputs:
@@ -439,6 +470,10 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
             %   batch_size: batch size when computing the samples from the
             %   continuous distribution on the quality space (default is
             %   1e4)
+            %   hist_edge_x: edges of bins on the x-axis for 2D pdf
+            %   estimation (default is [])
+            %   hist_edge_y: edges of bins on the y-axis for 2D pdf
+            %   estimation (default is [])
             % Output:
             %   UB_disc_list: vector containing the computed upper bounds 
             %   for the matching for teams problem based on the discrete 
@@ -448,6 +483,9 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
             %   measure on the quality space
             %   samps: one particular set of Monte Carlo samples used in 
             %   the approximation of the bounds
+            %   samp_histpdf: 2D pdf estimation via the histogram of the
+            %   generated samples from the continuous quality distribution;
+            %   only computed if both hist_edge_x and hist_edge_y are set
 
             if ~exist('rand_stream', 'var') ...
                     || isempty(rand_stream)
@@ -457,6 +495,12 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
             if ~exist('batch_size', 'var') ...
                     || isempty(batch_size)
                 batch_size = 1e4;
+            end
+
+            if ~exist('hist_edge_x', 'var') || ~exist('hist_edge_y', 'var')
+                hist_edge_x = [];
+                hist_edge_y = [];
+                samp_histpdf = [];
             end
 
             UB_disc_list = zeros(rep_num, 1);
@@ -474,6 +518,16 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
                     '--- Monte Carlo sampling starts ---\n');
             end
 
+            % initialize the 2D histogram if it needs to be computed
+            if ~isempty(hist_edge_x) && ~isempty(hist_edge_y)
+                pdf_computed = true;
+
+                samp_histpdf = zeros(length(hist_edge_x) - 1, ...
+                    length(hist_edge_y) - 1);
+            else
+                pdf_computed = false;
+            end
+
             for rep_id = 1:rep_num
                 [UB_disc_list(rep_id), UB_cont_list(rep_id), samps] ...
                     = obj.getMTUpperBounds(samp_num, rand_stream, ...
@@ -481,16 +535,25 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
 
                 % display output
                 if obj.Options.display
-                    fprintf(['MT2DQuad: ' ...
+                    fprintf(['%s: ' ...
                         'Monte Carlo sampling repetition %3d done\n'], ...
-                        rep_id);
+                        class(obj), rep_id);
                 end
 
                 % write log
                 if ~isempty(obj.Options.log_file)
-                    fprintf(log_file, ['MT2DQuad: ' ...
+                    fprintf(log_file, ['%s: ' ...
                         'Monte Carlo sampling repetition %3d done\n'], ...
-                        rep_id);
+                        class(obj), rep_id);
+                end
+
+                % update the 2D histogram
+                if pdf_computed
+                    samp_histpdf = samp_histpdf ...
+                        + histcounts2(samps.ContinuousQualities(:, 1), ...
+                        samps.ContinuousQualities(:, 2), ...
+                        hist_edge_x, hist_edge_y, ...
+                        'Normalization', 'pdf');
                 end
             end
 
@@ -499,6 +562,11 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
                 fprintf(log_file, ...
                     '--- Monte Carlo sampling ends ---\n\n');
                 fclose(log_file);
+            end
+
+            % normalize the 2D histogram
+            if pdf_computed
+                samp_histpdf = samp_histpdf / rep_num;
             end
         end
     end
@@ -583,7 +651,8 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
             pt_num = size(pts, 1);
             poly_num = length(obj.Quality.Polytopes);
             inside = any(reshape(all(reshape(obj.Quality.Hyperplane.w ...
-                * pts' - obj.Quality.Hyperplane.b <= 1e-12, ...
+                * pts' - obj.Quality.Hyperplane.b <= ...
+                MT2DQuad.INSIDE_TOLERANCE, ...
                 obj.Quality.Hyperplane.num, poly_num * pt_num), 1), ...
                 poly_num, pt_num), 1)'; 
         end
@@ -784,6 +853,17 @@ classdef (Abstract) MT2DQuad < LSIPMinCuttingPlaneAlgo
             end
         end
 
+        function updateLSIPUB(obj, min_lb, optimizers) %#ok<INUSD> 
+            % Update the LSIP upper bound after each call to the global
+            % minimization oracle
+            % Inputs:
+            %   min_lb: the lower bound for the global minimization problem
+            %   optimizers: a set of approximate optimizers of the global
+            %   minimization problem
+
+            obj.Runtime.LSIP_UB = min(obj.Runtime.LSIP_UB, ...
+                obj.Runtime.LSIP_LB - min_lb);
+        end
     end
 end
 

@@ -1,33 +1,27 @@
-classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
+classdef ProbMeas2D_MixNorm < ProbMeas2D_ConvexPolytope ...
         & HasTractableQuadraticIntegrals
-    % Class for probability measures with continuous piece-wise affine
-    % (CPWA) density function. The support of the probability measure is
-    % formed by the union of triangles. The triangles need to satisfy the
-    % following condition: if two triangles A and B are not disjoint, then
-    % the intersection of A and B needs to be a face of both A and B, i.e.,
-    % the intersection of A and B is either an edge of A or a vertex of A,
-    % and is also either an edge of B or a vertex of B. 
+    % Class for mixture of bivariate normal probability measures truncated
+    % to a union of triangles. The triangles need to satisfy the following 
+    % condition: if two triangles A and B are not disjoint, then the 
+    % intersection of A and B needs to be a face of both A and B, i.e., the
+    % intersection of A and B is either an edge of A or a vertex of A, and 
+    % is also either an edge of B or a vertex of B. 
 
     methods(Access = public)
-        function obj = ProbMeas2D_CPWADens(vertices, triangles, ...
-                dens_vertices)
+        function obj = ProbMeas2D_MixNorm(vertices, triangles, ...
+                mixnorm)
             % Constructor function
             % Inputs:
             %   vertices: two-column matrix containing the vertices of all
             %   triangles
             %   triangles: three-column matrix indicating the triangulation
-            %   dens_triangles: vector containing the density at each
-            %   vertex (thus specifying the entire density function via
-            %   interpolation)
+            %   mixnorm: struct with fields weights and components where
+            %   weights is a vector containing positive weights of the
+            %   mixture component and components is a cell array containing
+            %   mean vectors and covariant matrices
 
             % call the superclass constructor to initialize the support
             obj@ProbMeas2D_ConvexPolytope(vertices);
-
-            obj.Dens = struct;
-
-            if any(dens_vertices < 0)
-                error('the density is not non-negative');
-            end
 
             % check if there are duplicate vertices
             assert(size(unique(vertices, 'rows'), 1) ...
@@ -51,73 +45,101 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
             obj.Supp.TriangleVertices = vertices;
             obj.Supp.Triangles = triangles;
 
+            % number of mixture components
+            comp_num = length(mixnorm.weights);
+
+            % check the weights of the mixture components
+            assert(all(mixnorm.weights > 0) && abs(sum(mixnorm.weights) ...
+                - 1) < 1e-14, ...
+                'mixture weights must be positive and sum to 1');
+
+            assert(length(mixnorm.components) == comp_num, ...
+                'mixture components mis-specified');
+
             tri_num = size(triangles, 1);
 
             % evaluate the integral of the unnormalized density within each
             % triangular region
-            tri_integral = zeros(tri_num, 1);
-
+            tri_integral = zeros(tri_num, comp_num);
+            
             % evaluate the integrals of x1, x2, x1^2, x2^2, and x1*x2 with 
             % respect to the mixture of bivariate Gaussian measure within 
             % each triangular region
-            tri_lin_integral_x1 = zeros(tri_num, 1);
-            tri_lin_integral_x2 = zeros(tri_num, 1);
-            tri_quad_integral_x1sq = zeros(tri_num, 1);
-            tri_quad_integral_x2sq = zeros(tri_num, 1);
-            tri_quad_integral_x1x2 = zeros(tri_num, 1);
+            tri_lin_integral_x1 = zeros(tri_num, comp_num);
+            tri_lin_integral_x2 = zeros(tri_num, comp_num);
+            tri_quad_integral_x1sq = zeros(tri_num, comp_num);
+            tri_quad_integral_x2sq = zeros(tri_num, comp_num);
+            tri_quad_integral_x1x2 = zeros(tri_num, comp_num);
 
-            for tri_id = 1:tri_num
-                tri_verts = vertices(triangles(tri_id, :), :);
-                dens_triangle = dens_vertices(triangles(tri_id, :));
-                
-                int_vals = ...
-                        ProbMeas2D_AffDens.affineIntegralTriangle( ...
-                        dens_triangle, tri_verts', eye(6), false(6, 1));
+            for comp_id = 1:comp_num
+                mean_vec = mixnorm.components{comp_id}.mean_vec;
+                cov_mat = mixnorm.components{comp_id}.cov_mat;
 
-                tri_integral(tri_id) = int_vals(6);
-                tri_lin_integral_x1(tri_id) = int_vals(4);
-                tri_lin_integral_x2(tri_id) = int_vals(5);
-                tri_quad_integral_x1sq(tri_id) = int_vals(1);
-                tri_quad_integral_x2sq(tri_id) = int_vals(2);
-                tri_quad_integral_x1x2(tri_id) = int_vals(3);
+                for tri_id = 1:tri_num
+                    tri_verts = vertices(triangles(tri_id, :), :)';
+                    
+                    int_vals = ...
+                        ProbMeas2D_MixNorm.gaussianIntegralTriangle( ...
+                        mean_vec, cov_mat, tri_verts, ...
+                        [0, 0, 0, 0, 0, 1; ...
+                        0, 0, 0, 1, 0, 0; ...
+                        0, 0, 0, 0, 1, 0; ...
+                        1, 0, 0, 0, 0, 0; ...
+                        0, 1, 0, 0, 0, 0; ...
+                        0, 0, 1, 0, 0, 0]', ...
+                        [true; false; false; false; false; false]);
+                    tri_integral(tri_id, comp_id) = int_vals(1);
+                    tri_lin_integral_x1(tri_id, comp_id) = int_vals(2);
+                    tri_lin_integral_x2(tri_id, comp_id) = int_vals(3);
+                    tri_quad_integral_x1sq(tri_id, comp_id) = int_vals(4);
+                    tri_quad_integral_x2sq(tri_id, comp_id) = int_vals(5);
+                    tri_quad_integral_x1x2(tri_id, comp_id) = int_vals(6);
+                end
             end
 
             % calculate the normalizing constant and normalize the density
-            norm_const = sum(tri_integral);
-            dens_vertices = dens_vertices / norm_const;
-            obj.Dens = struct('VertexDensities', dens_vertices, ...
-                'NormConst', norm_const);
+            norm_const = sum(tri_integral * mixnorm.weights);
 
             % calculate the expected value of x1, x2, x1^2, x2^2, x1*x2
             obj.FirstMomentVec = zeros(2, 1);
-            obj.FirstMomentVec(1) = sum(tri_lin_integral_x1) / norm_const;
-            obj.FirstMomentVec(2) = sum(tri_lin_integral_x2) / norm_const;
+            obj.FirstMomentVec(1) = ...
+                sum(tri_lin_integral_x1 * mixnorm.weights) / norm_const;
+            obj.FirstMomentVec(2) = ...
+                sum(tri_lin_integral_x2 * mixnorm.weights) / norm_const;
             obj.SecondMomentMat = zeros(2, 2);
             obj.SecondMomentMat(1, 1) = ...
-                sum(tri_quad_integral_x1sq) / norm_const;
+                sum(tri_quad_integral_x1sq * mixnorm.weights) / norm_const;
             obj.SecondMomentMat(2, 2) = ...
-                sum(tri_quad_integral_x2sq) / norm_const;
+                sum(tri_quad_integral_x2sq * mixnorm.weights) / norm_const;
             obj.SecondMomentMat(1, 2) = ...
-                sum(tri_quad_integral_x1x2) / norm_const;
+                sum(tri_quad_integral_x1x2 * mixnorm.weights) / norm_const;
             obj.SecondMomentMat(2, 1) = obj.SecondMomentMat(1, 2);
 
-            obj.Dens.InterpMat = zeros(tri_num, 3);
+            % throughout this class, we evaluate densities and integrals of
+            % the non-truncated mixture of bivariate Gaussian and then
+            % scale by the normalizing constant
+            obj.Dens = struct('MixWeights', mixnorm.weights, ...
+                'NormConst', norm_const);
+
+            obj.Dens.MixComponents = cell(comp_num, 1);
+
+            for comp_id = 1:comp_num
+                obj.Dens.MixComponents{comp_id} = struct( ...
+                    'MeanVec', mixnorm.components{comp_id}.mean_vec, ...
+                    'CovMat', mixnorm.components{comp_id}.cov_mat);
+                obj.Dens.MixComponents{comp_id}.CovMatChol = ...
+                    chol(obj.Dens.MixComponents{comp_id}.CovMat);
+            end
+
             obj.Dens.EdgeIneq = struct;
             
             ineq_w_cell = cell(tri_num, 1);
             ineq_b_cell = cell(tri_num, 1);
 
             for tri_id = 1:tri_num
-                tri_verts = triangles(tri_id, :)';
+                tri_vert_id = triangles(tri_id, :)';
 
-                tri_vert_mat = vertices(tri_verts, :);
-
-                % calculate the affine interpolation function for each
-                % triangle (ignoring the fact that interpolation only makes
-                % sense within the triangle)
-                obj.Dens.InterpMat(tri_id, :) = ...
-                    [tri_vert_mat, ones(3, 1)] ...
-                    \ dens_vertices(tri_verts);
+                tri_vert_mat = vertices(tri_vert_id, :);
 
                 % sort the three vertices counterclockwise
                 ccorder = convhull(tri_vert_mat(:, 1), ...
@@ -147,17 +169,12 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
             obj.Dens.EdgeIneq.w = vertcat(ineq_w_cell{:});
             obj.Dens.EdgeIneq.b = vertcat(ineq_b_cell{:});
 
-            % prepare information needed for rejection sampling
+            % prepare information needed for rejection sampling; since we
+            % use the non-truncated mixture of bivariate Gaussians as the
+            % proposal, the multiplier is simply the inverse of the
+            % normalization constant
             obj.RejSamp = struct;
-            obj.RejSamp.Range = struct;
-            obj.RejSamp.Range.x = [min(vertices(:, 1)), ...
-                max(vertices(:, 1))];
-            obj.RejSamp.Range.y = [min(vertices(:, 2)), ...
-                max(vertices(:, 2))];
-
-            obj.RejSamp.Multiplier = max(dens_vertices) ...
-                * (obj.RejSamp.Range.x(2) - obj.RejSamp.Range.x(1)) ...
-                * (obj.RejSamp.Range.y(2) - obj.RejSamp.Range.y(1));
+            obj.RejSamp.Multiplier = 1 / obj.Dens.NormConst;
         end
 
         function dens = densityFunction(obj, pts)
@@ -168,22 +185,23 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
             %   dens: vector containing the computed densities
 
             input_num = size(pts, 1);
+            comp_num = length(obj.Dens.MixWeights);
+            components = obj.Dens.MixComponents;
 
-            % evaluate the density by interpolation in each triangle
-            % (ignoring whether the point is in the triangle)
-            dens_interp = obj.Dens.InterpMat * [pts'; ones(1, input_num)];
+            dens_mat = zeros(input_num, comp_num);
 
-            tri_inside_mat = obj.checkIfInsideTriangularRegion(pts);
+            for comp_id = 1:comp_num
+                % compute the density with respect to each mixture
+                % component
+                dens_mat(:, comp_id) = mvnpdf(pts, ...
+                    components{comp_id}.MeanVec', ...
+                    components{comp_id}.CovMat);
+            end
 
-            % normalize the matrix such that each column sums to 1; if a
-            % point belongs to more than one triangles, then the densities
-            % calculated with respect to each of such triangles should
-            % anyways be the same
-            tri_inside_mat_sum = sum(tri_inside_mat, 2);
-            tri_inside_mat_sum(tri_inside_mat_sum == 0) = 1;
-            tri_inside_mat = tri_inside_mat ./ tri_inside_mat_sum;
+            inside = obj.checkIfInsideSupport(pts);
 
-            dens = sum(dens_interp' .* tri_inside_mat, 2);
+            dens = (dens_mat * obj.Dens.MixWeights) .* inside ...
+                / obj.Dens.NormConst;
         end
     
         function inside_mat = checkIfInsideTriangularRegion(obj, pts)
@@ -288,17 +306,30 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
                 samp_num, rand_stream)
             % Generate random samples from a proposal distribution for
             % rejection sampling. For this probability measure, the
-            % proposal distribution is uniform on a square.
+            % proposal distribution is the non-truncated mixture of
+            % bivariate Gaussians with the same parameters.
             % Inputs:
             %   samp_num: number of samples to generate
             %   rand_stream: RandStream object used for sampling
 
-            width_x = diff(obj.RejSamp.Range.x);
-            width_y = diff(obj.RejSamp.Range.y);
+            comp_weights = obj.Dens.MixWeights;
+            components = obj.Dens.MixComponents;
+            comp_num = length(comp_weights);
 
-            raw_samps = rand(rand_stream, samp_num, 2) ...
-                .* [width_x, width_y] ...
-                + [obj.RejSamp.Range.x(1), obj.RejSamp.Range.y(1)];
+            % first generate the component labels
+            label_list = randsample(rand_stream, comp_num, samp_num, ...
+                true, comp_weights);
+
+            raw_samps = zeros(samp_num, 2);
+
+            for comp_id = 1:comp_num
+                component = components{comp_id};
+                comp_id_list = label_list == comp_id;
+
+                raw_samps(comp_id_list, :) = ...
+                    randn(rand_stream, sum(comp_id_list), 2) ...
+                    * component.CovMatChol + component.MeanVec';
+            end
         end
 
         function accept_probs = rejSampAcceptProbFunction(obj, raw_samps)
@@ -312,10 +343,7 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
             %   accept_probs: vector containing the computed acceptance
             %   probability
 
-            accept_probs = obj.densityFunction(raw_samps) ...
-                    / (obj.RejSamp.Multiplier ...
-                    / (diff(obj.RejSamp.Range.x) ...
-                    * diff(obj.RejSamp.Range.y)));
+            accept_probs = obj.checkIfInsideSupport(raw_samps);
         end
 
         function prepareOptimalTransport(obj, atoms, probs, angle_list)
@@ -327,7 +355,7 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
             %   probs: vector containing the probabilities of the atoms in
             %   the discrete measure
             %   angle_list: vector containing angles used in the 
-            %   integration
+            % integration
 
             prepareOptimalTransport@ProbMeas2D_ConvexPolytope(obj, ...
                 atoms, probs, angle_list);
@@ -335,6 +363,7 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
             angle_list = obj.OT.Prep.angle_list;
             angle_num = length(angle_list);
 
+            comp_num = length(obj.Dens.MixWeights);
             atom_num = size(obj.OT.DiscMeas.Atoms, 1);
             tri_num = size(obj.Supp.Triangles, 1);
             obj.OT.Prep.radial = cell(atom_num, 1);
@@ -383,17 +412,63 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
                 % to the upper bound
                 tri_itvl_lb = min(tri_itvl_lb, tri_itvl_ub);
 
-                aff_intercept = obj.Dens.InterpMat ...
-                    * [obj.OT.DiscMeas.Atoms(atom_id, :)'; 1];
-                aff_coefficient = obj.Dens.InterpMat ...
-                    * [cos(angle_list'); sin(angle_list'); ...
-                    zeros(1, angle_num)];
+
+                % prepare quantities used to compute the integrals
+
+                % unit vectors in each direction
+                unit_v = [cos(angle_list), sin(angle_list)];
+
+                % multiplicative coefficients and intercepts of the radial
+                % distance
+                rho_coef = zeros(comp_num, angle_num);
+                rho_intercept = zeros(comp_num, angle_num);
+
+                % the multiplicative constant when evaluating the integrals
+                % of r -> r^2 * p(r); each row corresponds to a mixture 
+                % component, each column corresponds to an angle
+                quad_mult = zeros(comp_num, angle_num);
+
+                % the multiplicative constant in front of the term
+                % involving normcdf
+                quad_cdf_mult = zeros(comp_num, angle_num);
+
+                % the multiplicative constant when evaluating the integrals
+                % of r -> r * p(r); each row corresponds to a mixture 
+                % component, each column corresponds to an angle
+                lin_mult = zeros(comp_num, angle_num);
+
+                for comp_id = 1:comp_num
+                    mean_vec = obj.Dens.MixComponents{comp_id}.MeanVec;
+                    cov_mat = obj.Dens.MixComponents{comp_id}.CovMat;
+
+                    diff_vec = obj.OT.DiscMeas.Atoms(atom_id, :)' ...
+                        - mean_vec;
+                    a1 = sum(unit_v' .* (cov_mat \ unit_v'), 1)';
+                    a2 = sum(unit_v' .* (cov_mat \ diff_vec), 1)';
+                    a3 = diff_vec' * (cov_mat \ diff_vec);
+                    a1_sqrt = sqrt(a1);
+                    a2_over_a1_sqrt = a2 ./ a1_sqrt;
+
+                    rho_coef(comp_id, :) = a1_sqrt';
+                    rho_intercept(comp_id, :) = a2_over_a1_sqrt';
+
+                    mult_const = 1 / sqrt(2 * pi) / sqrt(det(cov_mat)) ...
+                        * exp(-1/2 * (a3 - a2.^2 ./ a1)) ...
+                        * obj.Dens.MixWeights(comp_id);
+
+                    quad_mult(comp_id, :) = (mult_const ./ a1 ./ a1_sqrt)';
+                    quad_cdf_mult(comp_id, :) = (a2.^2 ./ a1 + 1)';
+                    lin_mult(comp_id, :) = (-mult_const ./ a1)';
+                end
 
                 obj.OT.Prep.radial{atom_id} = struct( ...
                     'interval_lb', tri_itvl_lb, ...
                     'interval_ub', tri_itvl_ub, ...
-                    'intercept', aff_intercept, ...
-                    'coefficient', aff_coefficient);
+                    'radial_coefficient', rho_coef, ...
+                    'radial_intercept', rho_intercept, ...
+                    'intquad_mult', quad_mult / obj.Dens.NormConst, ...
+                    'intquad_cdf_mult', quad_cdf_mult, ...
+                    'intlin_mult', lin_mult / obj.Dens.NormConst);
             end
         end
 
@@ -415,7 +490,11 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
             %   val2: the integral of r -> r^2 * p(r)
 
             radial = obj.OT.Prep.radial{atom_id};
-            coef = radial.coefficient(:, angle_indices);
+            rho_coef = radial.radial_coefficient(:, angle_indices);
+            rho_intercept = radial.radial_intercept(:, angle_indices);
+            quad_mult = radial.intquad_mult(:, angle_indices);
+            quad_cdf_mult = radial.intquad_cdf_mult(:, angle_indices);
+            lin_mult = radial.intlin_mult(:, angle_indices);
             
             % intersect the intervals (representing line segments in every
             % direction) with (0, upper_limits), and making sure that empty
@@ -424,14 +503,42 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
                 upper_limits');
             itg_lb = min(radial.interval_lb(:, angle_indices), itg_ub);
 
-            upper_limits_p2 = itg_ub .^ 2 - itg_lb .^ 2;
-            upper_limits_p3 = itg_ub .^ 3 - itg_lb .^ 3;
-            upper_limits_p4 = itg_ub .^ 4 - itg_lb .^ 4;
+            % evaluate the integrals
+            comp_num = length(obj.Dens.MixWeights);
+            [intv_num, angle_num] = size(itg_ub);
 
-            val1 = sum(coef / 3 .* upper_limits_p3 ...
-                + radial.intercept / 2 .* upper_limits_p2, 1)';
-            val2 = sum(coef / 4 .* upper_limits_p4 ...
-                + radial.intercept / 3 .* upper_limits_p3, 1)';
+            intquad_mat = zeros(intv_num, angle_num);
+            intlin_mat = zeros(intv_num, angle_num);
+
+            for comp_id = 1:comp_num
+                rho_coef_comp = rho_coef(comp_id, :);
+                rho_intercept_comp = rho_intercept(comp_id, :);
+
+                % scale and shift the upper bounds and lower bounds
+                ub_ss = rho_coef_comp .* itg_ub + rho_intercept_comp;
+                lb_ss = rho_coef_comp .* itg_lb + rho_intercept_comp;
+
+                ub_cdf = normcdf(ub_ss);
+                lb_cdf = normcdf(lb_ss);
+                ub_pdf = normpdf(ub_ss);
+                lb_pdf = normpdf(lb_ss);
+
+                ub_ss_alt = -rho_coef_comp .* itg_ub + rho_intercept_comp;
+                lb_ss_alt = -rho_coef_comp .* itg_lb + rho_intercept_comp;
+
+                % compute the integrals with each mixture component
+                intquad_mat = intquad_mat ...
+                    + (quad_cdf_mult(comp_id, :) .* (ub_cdf - lb_cdf) ...
+                    + (ub_ss_alt .* ub_pdf) - (lb_ss_alt .* lb_pdf)) ...
+                    .* quad_mult(comp_id, :);
+                intlin_mat = intlin_mat ...
+                    + ((ub_pdf - lb_pdf) ...
+                    + rho_intercept_comp .* (ub_cdf - lb_cdf)) ...
+                    .* lin_mult(comp_id, :);
+            end
+
+            val1 = sum(intlin_mat, 1)';
+            val2 = sum(intquad_mat, 1)';
         end
      
         function postProcessOptimalTransport(obj, pp_angle_indices)
@@ -465,8 +572,7 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
 
                 radial = obj.OT.Prep.radial{atom_id};
                 rad_int_ub = radial.interval_ub(:, pp_angle_indices);
-                rad_int_lb = radial.interval_lb(:, pp_angle_indices);
-                rad_coef = radial.coefficient(:, pp_angle_indices);
+
                 obj.OT.CondRejSamp{atom_id} = struct;
                 itvl_ub_max = max(rad_int_ub, [], 1)';
 
@@ -486,13 +592,42 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
                 
                 % conservative estimate of the maximum density in the cell
                 % in each direction
-                tri_density_lb = rad_int_lb .* rad_coef;
-                tri_density_ub = rad_int_ub .* rad_coef;
-                interval_nonempty = rad_int_lb < rad_int_ub;
-                tri_max_density = (radial.intercept ...
-                    + max(tri_density_lb, tri_density_ub)) ...
-                    .* interval_nonempty;
-                max_density = max(max(tri_max_density)) * 1.01 ...
+                comp_num = length(obj.Dens.MixWeights);
+                circ_center = obj.OT.DiscMeas.Atoms(atom_id, :)';
+                circum_pts =  circ_center' + radius ...
+                    * [cos(angle_samp), sin(angle_samp)];
+                max_density = 0;
+
+                for comp_id = 1:comp_num
+                    mean_vec = obj.Dens.MixComponents{comp_id}.MeanVec;
+                    cov_mat = obj.Dens.MixComponents{comp_id}.CovMat;
+                    cov_chol = obj.Dens.MixComponents{comp_id}.CovMatChol;
+
+                    if sum((circ_center - mean_vec).^2) <= radius^2
+                        % if the mean vector of the mixture component is
+                        % inside the circle, the maximum is attained at the
+                        % mean vector
+                        min_dist_sq = 0;
+                    else
+                        % otherwise, choose the point that minimizes the
+                        % Mahalanobis distance to the mean vector in a grid
+                        % on the circumference, then minus a 2% margin
+                        min_dist_sq = min(sum(((circum_pts - mean_vec') ...
+                            / cov_chol) .^ 2, 2)) * 0.98;
+                    end
+
+                    % evaluate the estimated un-normalized density
+                    max_density = max_density ...
+                        + 1 / (2 * pi) / sqrt(det(cov_mat)) ...
+                        * exp(-1/2 * min_dist_sq) ...
+                        * obj.Dens.MixWeights(comp_id);
+                end
+
+                % first divide by the normalizing constant to get the
+                % estimated maximum marginal density, then divide by the
+                % probability of the atom to get the estimated maximum
+                % conditional density
+                max_density = max_density / obj.Dens.NormConst ...
                     / obj.OT.DiscMeas.Probs(atom_id);
 
                 obj.OT.CondRejSamp{atom_id}.MaxDensity = max_density;
@@ -639,7 +774,8 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
             vert_num = size(vertices, 1);
             tri_num = size(triangles_agg, 1);
 
-            dens_vertices = obj.densityFunction(vertices);
+            components = obj.Dens.MixComponents;
+            comp_num = length(components);
 
             % evaluate the integral of three interpolation functions with
             % respect to the probability measure within each triangular
@@ -652,15 +788,28 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
             invtrans_cell = cell(tri_num, 1);
 
             for tri_id = 1:tri_num
-                tri_vert = vertices(triangles_agg(tri_id, :), :);
-                tri_dens = dens_vertices(triangles_agg(tri_id, :));
-                trans_mat = tri_vert(2:3, :)' - tri_vert(1, :)';
+                tri_verts = vertices(triangles_agg(tri_id, :), :);
 
-                tri_integrals(tri_id, :) = (sum(tri_dens) + tri_dens) ...
-                    / 24 * abs(det(trans_mat));
+                % compute the integrals of the three interpolation
+                % functions
+                for comp_id = 1:comp_num
+                    tri_integrals(tri_id, :) = tri_integrals(tri_id, :) ...
+                        + obj.Dens.MixWeights(comp_id) ...
+                        * ProbMeas2D_MixNorm.gaussianIntegralTriangle( ...
+                        components{comp_id}.MeanVec, ...
+                        components{comp_id}.CovMat, ...
+                        tri_verts', ...
+                        [0, 0, 0, -1, 0, 1; ...
+                        0, 0, 0, 1, -1, 0; ...
+                        0, 0, 0, 0, 1, 0]', true(3, 1))';
+                end
+
+                % divide by the normalization constant
+                tri_integrals(tri_id, :) = tri_integrals(tri_id, :) ...
+                    / obj.Dens.NormConst;
 
                 % compute the inverse transformation matrix
-                invtrans_cell{tri_id} = [tri_vert'; ones(1, 3)] ...
+                invtrans_cell{tri_id} = [tri_verts'; ones(1, 3)] ...
                     \ eye(3);
             end
 
@@ -675,6 +824,120 @@ classdef ProbMeas2D_CPWADens < ProbMeas2D_ConvexPolytope ...
 
             obj.SimplicialTestFuncs.InvTransMat ...
                 = vertcat(invtrans_cell{:});
+        end
+    end
+
+    methods(Static, Access = protected)
+        function vals = gaussianIntegralTriangle(mean_vec, cov_mat, ...
+                z_mat, polynomial_coefs, after_transform)
+            % Integrate bivariate second-order polynomials inside a
+            % triangle over a bivariate Gaussian measure
+            % Inputs:
+            %   mean_vec: the mean vector (2-by-1) of the Gaussian measure
+            %   cov_mat: the covariance matrix (2-by-2) of the Gaussian
+            %   measure
+            %   z_mat: 2-by-3 matrix containing the three vertices of the
+            %   triangle as columns
+            %   polynomial_coefs: matrix with six rows where each column
+            %   represents a polynomial integrand and each row represents a
+            %   coefficient in the polynomial: c1 * x1^2 + c2 * x2^2 
+            %   + c3 * x1 * x2 + c4 * x1 + c5 * x2 + c6
+            %   after_transform: logical vector indicating whether the
+            %   coefficients of each polynomial is applicable to the
+            %   variables before transformation or after transforming to
+            %   the triangle with vertices [0; 0], [1; 0], and [1; 1]
+            % Output: 
+            %   vals: vector containing the values of the integrals; each
+            %   entry corresponds to a polynomial
+
+            % compute the affine transformation that will transform the
+            % triangle formed by the columns of z_mat to the triangled with
+            % vertices [0; 0], [1; 0], and [1; 1]
+            trans_all = [0, 1, 1; 0, 0, 1] / [z_mat; ones(1, 3)];
+            trans_mat = trans_all(:, 1:2);
+            trans_shift = trans_all(:, 3);
+            trans_mat_inv = inv(trans_mat);
+
+            % compute the mean vector and the covariance matrix of the
+            % Gaussian measure after the affine transformation
+            trans_mean_vec = trans_mat * mean_vec + trans_shift;
+            trans_cov_mat = trans_mat * cov_mat * trans_mat';
+
+            vals = zeros(size(polynomial_coefs, 2), 1);
+
+            for poly_id = 1:size(polynomial_coefs, 2)
+                if ~after_transform(poly_id)
+                    % if the coefficients apply to the variables before
+                    % transformation, we need to compute the coefficients
+                    % after transformation
+                    coefs = polynomial_coefs(:, poly_id);
+                    coefs_mat = [coefs(1), coefs(3)/2; ...
+                        coefs(3)/2, coefs(2)];
+                    coefs_vec = coefs(4:5);
+                    coefs_const = coefs(6);
+
+                    tcoefs_mat = trans_mat_inv' * coefs_mat ...
+                        * trans_mat_inv;
+                    tcoefs_vec = trans_mat_inv' * coefs_vec ...
+                        - 2 * tcoefs_mat * trans_shift;
+                    tcoefs_const = trans_shift' * tcoefs_mat ...
+                        * trans_shift ...
+                        - coefs_vec' * trans_mat_inv ...
+                        * trans_shift + coefs_const; %#ok<MINV>
+                    coefs = [tcoefs_mat(1, 1); tcoefs_mat(2, 2); ...
+                        2 * tcoefs_mat(1, 2); tcoefs_vec; tcoefs_const];
+                else
+                    % otherwise, we can directly integrate over the
+                    % polynomial with the given coefficients
+                    coefs = polynomial_coefs(:, poly_id);
+                end
+
+                outer_integrand = @(x1)( ...
+                    ProbMeas2D_MixNorm.outerGaussianIntegrand( ...
+                    trans_mean_vec, trans_cov_mat, coefs, x1));
+
+                vals(poly_id) = integral(outer_integrand, 0, 1) ...
+                    / sqrt(trans_cov_mat(1, 1));
+            end
+        end
+
+        function vals = outerGaussianIntegrand(mean_vec, cov_mat, c, x1)
+            % Evaluates the outer integrand when integrating a bivariate
+            % second-order polynomial inside a triangle over a bivariate
+            % Gaussian measure
+            % Inputs: 
+            %   mean_vec: the mean vector of the transformed bivariate
+            %   Gaussian
+            %   cov_mat: the covariance matrix of the transformed bivariate
+            %   Gaussian
+            %   c: 6-by-1 vector containing the coefficients in the 
+            %   polynomial: c1 * x1^2 + c2 * x2^2 + c3 * x1 * x2 + c4 * x1 
+            %   + c5 * x2 + c6
+            %   x1: value of the first variable where the inner integral is
+            %   evaluated
+            % Output:
+            %   vals: the computed integrands
+
+            % compute the conditional mean and variance of the second
+            % variable conditional on the first variable
+            cond_m = mean_vec(2) + cov_mat(1, 2) / cov_mat(1, 1) ...
+                * (x1 - mean_vec(1));
+            cond_s = sqrt(cov_mat(2, 2) - cov_mat(1, 2)^2 / cov_mat(1, 1));
+
+            vals = (c(2) * (cond_m.^2 + cond_s^2) ...
+                + (c(3) * x1 + c(5)) .* cond_m ...
+                + c(1) * x1.^2 + c(4) * x1 + c(6)) ...
+                .* (normcdf((x1 - cond_m) / cond_s) ...
+                - normcdf(- cond_m / cond_s)) ...
+                + (c(2) * cond_s * cond_m ...
+                + (c(3) * x1 + c(5)) * cond_s) ...
+                .* normpdf(- cond_m / cond_s) ...
+                - (c(2) * (cond_s * cond_m + cond_s * x1) ...
+                + (c(3) * x1 + c(5)) * cond_s) ...
+                .* normpdf((x1 - cond_m) / cond_s);
+
+            vals = vals .* normpdf((x1 - mean_vec(1)) ...
+                / sqrt(cov_mat(1, 1)));
         end
     end
 end
