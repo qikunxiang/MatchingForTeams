@@ -2,6 +2,7 @@
 
 + By Ariel Neufeld and Qikun Xiang
 + Article link (arXiv): https://arxiv.org/abs/2308.03550
++ See also the implementation details in Supplementary.pdf
 
 ## Description of files
 
