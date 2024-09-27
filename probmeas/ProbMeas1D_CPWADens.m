@@ -148,7 +148,7 @@ classdef ProbMeas1D_CPWADens < ProbMeas1D_Interval
             % Output:
             %   x: vector containing outputs
 
-            if ~exist('batch_size', 'var') || isempty(barch_size)
+            if ~exist('batch_size', 'var') || isempty(batch_size)
                 batch_size = 1e4;
             end
 
