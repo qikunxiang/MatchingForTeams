@@ -1,6 +1,5 @@
 classdef (Abstract) HasTractableQuadraticIntegrals < handle
-    % Abstract class providing providing a property FirstMomentVec which is
-    % equal to the expected value of x as well as a property 
+    % Abstract class providing providing a property FirstMomentVec which is equal to the expected value of x as well as a property 
     % SecondMomentMat which is equal to the expected value of x' * x
     
     properties(GetAccess = public, SetAccess = protected)
@@ -25,8 +24,7 @@ classdef (Abstract) HasTractableQuadraticIntegrals < handle
             % Output:
             %   cov_mat: the covariance matrix of the probability measure
 
-            cov_mat = obj.SecondMomentMat ...
-                - obj.FirstMomentVec * obj.FirstMomentVec';
+            cov_mat = obj.SecondMomentMat - obj.FirstMomentVec * obj.FirstMomentVec';
         end
     end
 end

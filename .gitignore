@@ -1,2 +1,10 @@
 
 .DS_Store
+*.asv
+*.log
+*.mat
+*.mexmaca64
+/mex/src/.vscode
+/mex/.vscode
+/mex/build/*
+*.mexmaci64
