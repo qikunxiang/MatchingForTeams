@@ -241,7 +241,7 @@ The configuration is identical to the **Experiment: 2-Wasserstein barycenter** s
 + Run **WB\_Elliptical\_plot\_histogram.m** to plot the computed approximate 2-Wasserstein barycenters and the "true" 2-Wasserstein barycenter computed via the fixed-point scheme. 
 
 
-## Experiment 3: with one-dimensional type spaces
+## Experiment: matching with one-dimensional type spaces
 
 + All the relevant files used in this experiment are located in **exp/Benchmark1DCPWA\_Exp/**.
 
