@@ -1,13 +1,11 @@
 classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
-    % Class for cutting-plane algorithms used for solving linear
-    % semi-infinite programming (LSIP) problems (minimization)
+    % Class for cutting-plane algorithms used for solving linear semi-infinite programming (LSIP) problems (minimization)
 
     properties(GetAccess = public, SetAccess = protected)
         % struct for storing the options for the cutting-plane algorithm
         Options;
 
-        % struct for storing the additional options for the gurobi linear
-        % programming (LP) solver
+        % struct for storing the additional options for the gurobi linear programming (LP) solver
         LPOptions;
 
         % struct for storing the options for the global optimization oracle
@@ -24,26 +22,16 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
         function obj = LSIPMinCuttingPlaneAlgo(opt, LP_opt, gl_opt)
             % Constructor method
             % Inputs:
-            %   opt: struct containing the options for the cutting-plane
-            %   algorithm with the following fields
-            %       opt.time_limit: maximum time permitted for the
-            %       algorithm (default is inf)
-            %       opt.display: boolean indicating whether to display
-            %       information in each iteration (default is true)
-            %       opt.log_file: path to the log file where the outputs
-            %       will be written (default is '')
-            %       opt.rescue: struct containing parameters for saving and
-            %       loading save files
-            %       opt.rescue.save_file: path to save the progress
-            %       (default is '')
-            %       opt.rescue.save_interval: interval to save progress
-            %       (default is 100)
-            %       opt.rescue.load_file: path to load a save file before
-            %       running the algorithm (default is '')
-            %   LP_opt: struct for storing the additional options for the
-            %   gurobi linear programming (LP) solver (default is struct())
-            %   gl_opt: struct for storing the options for the global
-            %   optimization oracle (default is struct())
+            %   opt: struct containing the options for the cutting-plane algorithm with the following fields
+            %       opt.time_limit: maximum time permitted for the algorithm (default is inf)
+            %       opt.display: boolean indicating whether to display information in each iteration (default is true)
+            %       opt.log_file: path to the log file where the outputs will be written (default is '')
+            %       opt.rescue: struct containing parameters for saving and loading save files
+            %       opt.rescue.save_file: path to save the progress (default is '')
+            %       opt.rescue.save_interval: interval to save progress (default is 100)
+            %       opt.rescue.load_file: path to load a save file before running the algorithm (default is '')
+            %   LP_opt: struct for storing the additional options for the gurobi linear programming (LP) solver (default is struct())
+            %   gl_opt: struct for storing the options for the global optimization oracle (default is struct())
 
             % set the default options
             if ~exist('opt', 'var') || isempty(opt)
@@ -66,13 +54,11 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
                 opt.rescue = struct;
             end
 
-            if ~isfield(opt.rescue, 'save_file') ...
-                    || isempty(opt.rescue.save_file)
+            if ~isfield(opt.rescue, 'save_file') || isempty(opt.rescue.save_file)
                 opt.rescue.save_file = '';
             end
 
-            if ~isfield(opt.rescue, 'save_interval') ...
-                    || isempty(opt.rescue.save_interval)
+            if ~isfield(opt.rescue, 'save_interval') || isempty(opt.rescue.save_interval)
                 opt.rescue.save_interval = 100;
             end
 
@@ -92,22 +78,18 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
         end
 
         function output = run(obj, init_constr, tolerance, load_from_file)
-            % Run the cutting-plane algorithm for linear semi-infinite
-            % programming. The computed primal and dual solutions as well
-            % as the upper and lower bounds will be stored in the runtime
-            % environment afterwards
+            % Run the cutting-plane algorithm for linear semi-infinite programming. The computed primal and dual solutions as well as 
+            % the upper and lower bounds will be stored in the runtime environment afterwards.
             % Inputs:
             %   init_constr: information about the initial constraints
             %   tolerance: numerical tolerance value (default is 1e-4)
-            %   load_from_file: string containing the path to the file to
-            %   load from; the file must be a save from this function
+            %   load_from_file: string containing the path to the file to load from; the file must be a save from this function
             % Outputs:
             %   output: struct containing additional outputs
-            %   output.total_time: total time spent in the algorithm
-            %   output.iter: number of iterations
-            %   output.LP_time: time spent solving LP problems
-            %   output.global_time: time spent in the global minimization
-            %   oracle
+            %       output.total_time: total time spent in the algorithm
+            %       output.iter: number of iterations
+            %       output.LP_time: time spent solving LP problems
+            %       output.global_time: time spent in the global minimization oracle
 
             % start the timer
             total_timer = tic;
@@ -124,8 +106,7 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
                 loading_from_file = true;
             end
 
-            % initialize the algorithm by preparing some constant
-            % quantities
+            % initialize the algorithm by preparing some constant quantities
             obj.initializeBeforeRun();
 
             % parameters of the LP solver
@@ -134,12 +115,9 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
             % disable output by default
             LP_options.OutputFlag = 0;
 
-            % since the gurobi MATLAB interface does not support callback,
-            % set a 30-minute time limit on the LP solver; if the solver
-            % does not converge when the time limit is hit, it assumes that
-            % numerical issues have occurred and restarts the solution
-            % process with NumericFocus = 3 and LPWarmStart = 2 and
-            % TimeLimit = inf 
+            % since the gurobi MATLAB interface does not support callback, set a 30-minute time limit on the LP solver; if the solver
+            % does not converge when the time limit is hit, it assumes that numerical issues have occurred and restarts the solution
+            % process with adjusted parameters for better numerical focus
             LP_options.TimeLimit = 1800;
 
             % set the additional parameters for the LP solver
@@ -147,8 +125,7 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
             LP_options_values = struct2cell(obj.LPOptions);
 
             for fid = 1:length(LP_options_fields)
-                LP_options.(LP_options_fields{fid}) ...
-                    = LP_options_values{fid};
+                LP_options.(LP_options_fields{fid}) = LP_options_values{fid};
             end
 
             % save the actual options in the object
@@ -157,8 +134,7 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
             % prepare the runtime environment
             obj.prepareRuntime();
 
-            % generate the inital linear programming minimization problem
-            % in gurobi
+            % generate the inital linear programming minimization problem in gurobi
             obj.Runtime.CurrentLPModel = obj.generateInitialMinModel();
 
             % initialize the LSIP lower and upper bounds
@@ -169,8 +145,7 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
             % indicate that the cutting-plane algorithm is being executed
             obj.Runtime.Finished = false;
 
-            % add the initial constraints to the LP model stored in the
-            % runtime environment
+            % add the initial constraints to the LP model stored in the runtime environment
             obj.addConstraints(init_constr);
 
             % some statistics
@@ -186,8 +161,7 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
                     error('cannot open log file');
                 end
 
-                fprintf(log_file, ...
-                    '--- cutting-plane algorithm starts ---\n');
+                fprintf(log_file, '--- cutting-plane algorithm starts ---\n');
             end
 
             if loading_from_file
@@ -196,39 +170,28 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
                 obj.Runtime = loaded_save_file.saved_runtime;
             end
 
-            % loop until the gap between lower and upper bounds is below
-            % the tolerance 
+            % loop until the gap between lower and upper bounds is below the tolerance 
             while true
                 % solve the LP problem
                 LP_timer = tic;
                 LP_trial_num = 0;
+
+                % start with the provided options
+                LP_options_runtime = LP_options;
+                
                 while true
-                    LP_options_runtime = LP_options;
-
-                    if LP_trial_num == 1
-                        % if the LP solver has failed once (reaching the
-                        % time limit without converging), retry with high
-                        % numeric focus and presolve (with warm-start)
-                        LP_options_runtime.TimeLimit = inf;
-                        LP_options_runtime.NumericFocus = 3;
-                        LP_options_runtime.LPWarmStart = 2;
-                    end
-
-                    LP_result = gurobi(obj.Runtime.CurrentLPModel, ...
-                        LP_options_runtime);
+                    LP_result = gurobi(obj.Runtime.CurrentLPModel, LP_options_runtime);
 
                     if strcmp(LP_result.status, 'OPTIMAL')
                         break;
-                    else
-                        LP_trial_num = LP_trial_num + 1;
                     end
 
-                    if LP_trial_num >= 2
-                        % if the LP solver fails after the second trial,
-                        % report error 
-                        error('unexpected error while solving LP');
-                    end
+                    % if the provided options fail, increase the trial number and generate updated options from the error handler
+                    LP_trial_num = LP_trial_num + 1;
+
+                    LP_options_runtime = obj.handleLPErrors(LP_result, LP_options_runtime, LP_trial_num);
                 end
+
                 LP_time = LP_time + toc(LP_timer);
 
                 % update the runtime environment
@@ -239,33 +202,22 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
 
                 % call the global minimization oracle
                 global_timer = tic;
-                [min_lb, optimizers] = obj.callGlobalMinOracle( ...
-                    LP_result.x);
+                [min_lb, optimizers] = obj.callGlobalMinOracle(LP_result.x);
                 global_time = global_time + toc(global_timer);
 
                 % update the upper bound
                 obj.updateLSIPUB(min_lb, optimizers);
 
+                display_string = obj.buildMessage();
+
                 % display output
                 if obj.Options.display
-                    fprintf(['%s: ' ...
-                        'iteration %4d: LB = %10.4f, UB = %10.4f, ' ...
-                        'UB - LB = %10.6f\n'], class(obj), ...
-                        obj.Runtime.iter, ...
-                        obj.Runtime.LSIP_LB, ...
-                        obj.Runtime.LSIP_UB, ...
-                        obj.Runtime.LSIP_UB - obj.Runtime.LSIP_LB);
+                    fprintf(display_string);
                 end
 
                 % write log
                 if ~isempty(obj.Options.log_file)
-                    fprintf(log_file, ['%s: ' ...
-                        'iteration %4d: LB = %10.4f, UB = %10.4f, ' ...
-                        'UB - LB = %10.6f\n'], class(obj), ...
-                        obj.Runtime.iter, ...
-                        obj.Runtime.LSIP_LB, ...
-                        obj.Runtime.LSIP_UB, ...
-                        obj.Runtime.LSIP_UB - obj.Runtime.LSIP_LB);
+                    fprintf(log_file, display_string);
                 end
 
                 % check the termination criterion here
@@ -282,14 +234,11 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
                 % update the iteration counter
                 obj.Runtime.iter = obj.Runtime.iter + 1;
 
-                % overwrite manual_save to true to save states while
-                % debugging
+                % overwrite manual_save to true to save states while debugging
                 manual_save = false;
 
                 % save states
-                if ~isempty(obj.Options.rescue.save_file) ...
-                        && (mod(obj.Runtime.iter, ...
-                        obj.Options.rescue.save_interval) == 0 ...
+                if ~isempty(obj.Options.rescue.save_file) && (mod(obj.Runtime.iter, obj.Options.rescue.save_interval) == 0 ...
                         || manual_save)
                     saved_runtime = obj.Runtime;
                     save(obj.Options.rescue.save_file, 'saved_runtime');
@@ -300,8 +249,7 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
                     warning('LSIP time limit exceeded');
 
                     if ~isempty(obj.Options.log_file)
-                        fprintf(log_file, ['%s: ' ...
-                            'LSIP time limit exceeded\n'], class(obj));
+                        fprintf(log_file, '%s: LSIP time limit exceeded\n', class(obj));
                     end
 
                     time_limit_exceeded = true;
@@ -317,8 +265,7 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
             dual_sol = obj.buildDualSolution(LP_result);
             obj.Runtime.DualSolution = dual_sol;
 
-            % set this flag to indicate that the cutting-plane algorithm
-            % has finished execution
+            % set this flag to indicate that the cutting-plane algorithm has finished execution
             obj.Runtime.Finished = true;
 
             % stop the timer
@@ -335,17 +282,17 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
 
             % close the log file
             if ~isempty(obj.Options.log_file)
-                fprintf(log_file, ...
-                    '--- cutting-plane algorithm ends ---\n\n');
+                fprintf(log_file, '--- cutting-plane algorithm ends ---\n\n');
                 fclose(log_file);
             end
+
+            obj.cleanUpRuntimeAfterRun();
         end
     end
 
     methods(Access = protected)
         function prepareRuntime(obj)
-            % Prepare the runtime environment by initializing some
-            % variables
+            % Prepare the runtime environment by initializing some variables
             obj.Runtime = struct;
 
             % initialize the warm-start basis used by gurobi
@@ -359,20 +306,66 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
             %   result: struct produced by gurobi
 
             % update the warm-start basis used by gurobi
-            if isfield(result, 'vbasis') && ~isempty(result.vbasis) ...
-                    && isfield(result, 'cbasis') && ~isempty(result.cbasis)
+            if isfield(result, 'vbasis') && ~isempty(result.vbasis) && isfield(result, 'cbasis') && ~isempty(result.cbasis)
                 obj.Runtime.vbasis = result.vbasis;
                 obj.Runtime.cbasis = result.cbasis;
             end
         end
 
+        function cleanUpRuntimeAfterRun(obj) %#ok<MANU>
+            % Clean up the runtime environment after finishing the cutting-plane algorithm
+        end
+
         function updateLSIPLB(obj, result)
-            % Update the LSIP lower bound in the runtime environment after
-            % solving each LP 
+            % Update the LSIP lower bound in the runtime environment after solving each LP 
             % Inputs:
             %   result: struct produced by gurobi
             
             obj.Runtime.LSIP_LB = result.objval;
+        end
+
+        function display_string = buildMessage(obj)
+            % Build a string as the message to display after each iteration
+            % Output:
+            %   display_string: the string to display
+
+            display_string = sprintf('%s: iteration %4d: LB = %10.4f, UB = %10.4f, UB - LB = %10.6f\n', ...
+                class(obj), ...
+                obj.Runtime.iter, ...
+                obj.Runtime.LSIP_LB, ...
+                obj.Runtime.LSIP_UB, ...
+                obj.Runtime.LSIP_UB - obj.Runtime.LSIP_LB);
+        end
+
+        function LP_options_runtime_new = handleLPErrors(obj, LP_result, LP_options_runtime, LP_trial_num) %#ok<INUSD>
+            % Handle numerical errors that occurred while solving LP
+            % Inputs: 
+            %   LP_result: struct returned by the gurobi function representing the result from solving LP
+            %   LP_options_runtime: struct containing the current options for solving LP
+            %   LP_trial_num: integer representing the number of trials so far
+            % Output:
+            %   LP_options_runtime_new: struct containing the updated options for solving LP
+
+            LP_options_runtime_new = LP_options_runtime;
+
+            if LP_trial_num == 1
+                % if the LP solver has failed once (reaching the time limit without converging), retry after  setting higher numeric 
+                % focus, turning off presolve, and removing the existing bases
+                LP_options_runtime.TimeLimit = LP_options_runtime.TimeLimit * 2;
+                LP_options_runtime.NumericFocus = 3;
+                LP_options_runtime.Quad = 1;
+                LP_options_runtime.Presolve = 0;
+
+                if isfield(obj.Runtime.CurrentLPModel, 'cbasis')
+                    obj.Runtime.CurrentLPModel = rmfield(obj.Runtime.CurrentLPModel, 'cbasis');
+                end
+
+                if isfield(obj.Runtime.CurrentLPModel, 'vbasis')
+                    obj.Runtime.CurrentLPModel = rmfield(obj.Runtime.CurrentLPModel, 'vbasis');
+                end
+            else
+                error('error encountered while solving LP');
+            end
         end
     end
 
@@ -383,30 +376,25 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
         % Generate the initial linear programming model for gurobi
         model = generateInitialMinModel(obj);
 
-        % Given a decision vector, call the global minimization oracle to
-        % approximately determine the "most violated" constraints and
+        % Given a decision vector, call the global minimization oracle to approximately determine the "most violated" constraints and
         % return a lower bound for the minimal value
         [min_lb, optimizers] = callGlobalMinOracle(obj, vec);
 
-        % Given a collection of approximate optimizers from the global
-        % minimization oracle, generate and add the corresponding linear
+        % Given a collection of approximate optimizers from the global minimization oracle, generate and add the corresponding linear
         % constraints
         addConstraints(obj, optimizers);
 
         % Remove some of the constraints to speed up the LP solver
         reduceConstraints(obj, result);
 
-        % Update the LSIP upper bound after each call to the global
-        % minimization oracle
+        % Update the LSIP upper bound after each call to the global minimization oracle
         updateLSIPUB(obj, min_lb, optimizers);
 
-        % Given the output from gurobi and a lower bound for the optimal
-        % value of the global minimization oracle, build the corresponding
-        % primal solution
+        % Given the output from gurobi and a lower bound for the optimal value of the global minimization oracle, build the 
+        % corresponding primal solution
         primal_sol = buildPrimalSolution(obj, result, violation);
 
-        % Given the output from gurobi, build the corresponding dual
-        % solution
+        % Given the output from gurobi, build the corresponding dual solution
         dual_sol = buildDualSolution(obj, result);
     end
 end
