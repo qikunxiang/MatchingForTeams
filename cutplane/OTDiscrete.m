@@ -275,7 +275,7 @@ classdef OTDiscrete < LSIPMinCuttingPlaneAlgo
 
             atom_num1 = length(obj.Probs1);
             primal_sol = struct;
-            primal_sol.Potential1 = result.x(1:atom_num1) - violation;
+            primal_sol.Potential1 = result.x(1:atom_num1) + violation;
             primal_sol.Potential2 = result.x((atom_num1 + 1):end);
         end
 

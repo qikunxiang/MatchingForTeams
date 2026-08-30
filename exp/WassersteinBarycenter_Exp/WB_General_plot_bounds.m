@@ -18,8 +18,8 @@ for test_id = 1:test_num
 end
 
 decivar_num_list = sum(marg_testfuncs_num_mat, 2) + (quality_testfuncs_num_list + 1) * marg_num;
-x_tick = [2e3, 3e3, 4e3, 5e3, 6e3, 7e3, 8e3, 9e3, 1e4, 2e4, 3e4, 4e4, 5e4, 6e4, 7e4, 8e4, 9e4, 1e5, 2e5, 3e5];
-x_tickangle = 70;
+x_tick = [2e3, 4e3, 6e3, 1e4, 2e4, 4e4, 6e4, 1e5, 2e5, 3e5];
+x_tickangle = 22;
 line_width = 1.25;
 
 MT_UB1_err = zeros(test_num, 2);
@@ -39,7 +39,7 @@ end
 % figure of all lower and upper bounds
 
 figure('Position', [0, 100, 400, 300]);
-ha = tight_subplot(1, 1, [0, 0], [0.180, 0.015], [0.095, 0.025]);
+ha = tight_subplot(1, 1, [0, 0], [0.142, 0.015], [0.095, 0.013]);
 axes(ha(1));
 
 hold on;
@@ -55,9 +55,9 @@ box on;
 grid on;
 
 legend([handle_UB1, handle_UB2, handle_LB], ...
-    {'$\hat{\alpha}_{\mathsf{MT}}^{\mathsf{UB}}$', ...
-    '$\tilde{\alpha}_{\mathsf{MT}}^{\mathsf{UB}}$', ...
-    '$\alpha_{\mathsf{MT}}^{\mathsf{LB}}$'}, ...
+    {'$\hat{\alpha}_{\mathrm{MT}}^{\mathrm{ub}}$', ...
+    '$\tilde{\alpha}_{\mathrm{MT}}^{\mathrm{ub}}$', ...
+    '$\hat{\alpha}_{\mathrm{MT}}^{\mathrm{lb}}$'}, ...
     'Location', 'northeast', ...
     'Interpreter', 'latex', 'FontSize', 13);
 
@@ -72,7 +72,7 @@ ylabel('objective');
 % figure of sub-optimalities and error bounds
 
 figure('Position', [400, 100, 400, 300]);
-ha = tight_subplot(1, 1, [0, 0], [0.180, 0.015], [0.10, 0.025]);
+ha = tight_subplot(1, 1, [0, 0], [0.142, 0.015], [0.10, 0.013]);
 axes(ha(1));
 
 hold on;
@@ -88,9 +88,9 @@ box on;
 grid on;
 
 legend([handle_com1, handle_com2, handle_th], ...
-    {'$\hat{\epsilon}_{\mathsf{sub}}$', ...
-    '$\tilde{\epsilon}_{\mathsf{sub}}$', ...
-    '$\epsilon_{\mathsf{theo}}$'}, ...
+    {'$\hat{\epsilon}_{\mathrm{sub}}$', ...
+    '$\tilde{\epsilon}_{\mathrm{sub}}$', ...
+    '$\epsilon_{\mathrm{theo}}$'}, ...
     'Location', 'northeast', ...
     'Interpreter', 'latex', 'FontSize', 13);
 

@@ -44,7 +44,7 @@ for test_id = 1:test_num
     set(gca, 'XLim', x_axis_lim);
     set(gca, 'YLim', y_axis_lim);
 
-    xlabel(sprintf('$n=%d$', decivar_num_list(test_id)), 'Interpreter', 'latex', 'FontSize', 15);
+    xlabel(sprintf('$q=%d$', decivar_num_list(test_id)), 'Interpreter', 'latex', 'FontSize', 15);
 end
 
 figure('Position', [0, 100, 1500, 255]);
@@ -70,5 +70,5 @@ for test_id = 1:test_num
     set(gca, 'XLim', x_axis_lim);
     set(gca, 'YLim', y_axis_lim);
 
-    xlabel(sprintf('$n=%d$', decivar_num_list(test_id)), 'Interpreter', 'latex', 'FontSize', 15);
+    xlabel(sprintf('$q=%d$', decivar_num_list(test_id)), 'Interpreter', 'latex', 'FontSize', 15);
 end

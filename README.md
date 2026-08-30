@@ -219,7 +219,7 @@ The configuration is identical to the **Experiment: 2-Wasserstein barycenter** s
 		make
 
 ### Step 1: generate the input file
-+ Run **WB\_prepare.m** to generate a file containing the input measures as well as the test functions used in the approximation schemes.
++ Run **WB\_Elliptical\_prepare.m** to generate a file containing the input measures as well as the test functions used in the approximation schemes.
 
 + Run **WB\_Elliptical\_fixedpoint.m** to compute the "true" 2-Wasserstein barycenter via the fixed-point scheme of Álvarez-Esteban, P. C., Del Barrio, E., Cuesta-Albertos, J. A., & Matrán, C. (2016).
 

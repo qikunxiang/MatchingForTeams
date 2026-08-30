@@ -29,15 +29,17 @@ for test_id = 1:test_num
     decivar_num_list(test_id) = decivar_num_list(test_id) + marg_num * (quality_testfuncs_num + 1);
 end
 
-x_tick = [2e2, 3e2, 4e2, 5e2, 6e2, 7e2, 8e2, 9e2, 1e3, 2e3, 3e3, 4e3, 5e3, 6e3, 7e3, 8e3, 9e3, 1e4, 2e4, 3e4, 4e4];
-x_tickangle = 70;
+x_tick = [2e2, 4e2, 6e2, 1e3, 2e3, 4e3, 6e3, 1e4, 2e4, 4e4];
+x_tickangle = 20;
+x_tick_fontsize = 8;
+x_label_fontsize = 11;
 
 line_width = 1.25;
 
 % figure of all lower and upper bounds
 
 figure('Position', [100, 100, 420, 300]);
-ha = tight_subplot(1, 1, [0, 0], [0.170, 0.020], [0.085, 0.025]);
+ha = tight_subplot(1, 1, [0, 0], [0.120, 0.020], [0.085, 0.015]);
 axes(ha(1));
 
 hold on;
@@ -53,9 +55,9 @@ box on;
 grid on;
 
 legend([handle_UB1, handle_UB2, handle_LB], ...
-    {'$\hat{\alpha}_{\mathsf{MT}}^{\mathsf{UB}}$', ...
-    '$\tilde{\alpha}_{\mathsf{MT}}^{\mathsf{UB}}$', ...
-    '$\alpha_{\mathsf{MT}}^{\mathsf{LB}}$'}, ...
+    {'$\hat{\alpha}_{\mathrm{MT}}^{\mathrm{ub}}$', ...
+    '$\tilde{\alpha}_{\mathrm{MT}}^{\mathrm{ub}}$', ...
+    '$\hat{\alpha}_{\mathrm{MT}}^{\mathrm{lb}}$'}, ...
     'Location', 'northeast', ...
     'Interpreter', 'latex', ...
     'FontSize', 13);
@@ -68,10 +70,14 @@ set(gca, 'XLim', [min(x_tick), max(x_tick)]);
 set(gca, 'XTick', x_tick);
 xtickangle(x_tickangle);
 
+cur_axis = gca;
+cur_axis.XAxis.FontSize = x_tick_fontsize;
+cur_axis.XLabel.FontSize = x_label_fontsize;
+
 % figure of sub-optimalities and error bounds
 
 figure('Position', [520, 100, 420, 300]);
-ha = tight_subplot(1, 1, [0, 0], [0.170, 0.020], [0.095, 0.025]);
+ha = tight_subplot(1, 1, [0, 0], [0.120, 0.020], [0.095, 0.015]);
 axes(ha(1));
 
 hold on;
@@ -89,9 +95,9 @@ box on;
 grid on;
 
 legend([handle_com1, handle_com2, handle_th], ...
-    {'$\hat{\epsilon}_{\mathsf{sub}}$', ...
-    '$\tilde{\epsilon}_{\mathsf{sub}}$', ...
-    '$\epsilon_{\mathsf{theo}}$'}, ...
+    {'$\hat{\epsilon}_{\mathrm{sub}}$', ...
+    '$\tilde{\epsilon}_{\mathrm{sub}}$', ...
+    '$\epsilon_{\mathrm{theo}}$'}, ...
     'Location', 'northeast', ...
     'Interpreter', 'latex', ...
     'FontSize', 13);
@@ -101,10 +107,13 @@ set(gca, 'YScale', 'log');
 set(gca, 'XLim', [min(x_tick), max(x_tick)]);
 set(gca, 'XTick', x_tick);
 xtickangle(x_tickangle);
-set(gca, 'YLim', [1e-3, 1e1]);
-
 xlabel('number of decision variables');
 ylabel('sub-optimality');
+set(gca, 'YLim', [1e-3, 1e1]);
+cur_axis = gca;
+cur_axis.XAxis.FontSize = x_tick_fontsize;
+cur_axis.XLabel.FontSize = x_label_fontsize;
+
 
 bound_conservative = MT_THEB_list ./ MT_diff_mean_list;
 fprintf('The a priori upper bound is %d to %d times more conservative than the computed bound 1.\n', ...

@@ -66,7 +66,7 @@ for test_id = 1:test_num
     set(gca, 'XLim', x_axis_lim);
     set(gca, 'YLim', y_axis_lim);
 
-    xlabel(sprintf('$n=%d$', total_testfuncs_num(test_id)), 'Interpreter', 'latex', 'FontSize', 15);
+    xlabel(sprintf('$q=%d$', total_testfuncs_num(test_id)), 'Interpreter', 'latex', 'FontSize', 15);
 end
 
 

@@ -1,4 +1,4 @@
-% Plot the computed business location distributions
+% Plot the computed transfer functions
 
 CONFIG = BizLoc_config();
 
@@ -8,7 +8,7 @@ load(CONFIG.SAVEPATH_OUTPUTS_TRANSFUNCS);
 plot_index = 5;
 
 figure('Position', [100, 100, 1300, 280]);
-ha = tight_subplot(1, marg_num, [0, 0.015], [0.135, 0.020], [0.01, 0.05]);
+ha = tight_subplot(1, marg_num, [0, 0.015], [0.136, 0.014], [0.011, 0.040]);
 
 tf_min = min(min(MT_transfuncs_cell{plot_index}));
 tf_max = max(max(MT_transfuncs_cell{plot_index}));
@@ -30,8 +30,8 @@ for marg_id = 1:marg_num
     set(gca, 'XTick', -2:1:2);
     set(gca, 'YTick', -3:1:2);
 
-    xlabel(sprintf('$\\tilde{\\varphi}_{%d}$', marg_id), 'Interpreter', 'latex', 'FontSize', 17);
+    xlabel(sprintf('$\\hat{\\varphi}_{%d}$', marg_id), 'Interpreter', 'latex', 'FontSize', 17);
 end
 
 cb = colorbar(ha(end), 'manual');
-cb.Position = [0.96, 0.135, 0.015, 0.845];
+cb.Position = [0.969, 0.136, 0.015, 0.851];

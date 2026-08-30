@@ -1,32 +1,25 @@
 classdef ProbMeas1DCPWADens < ProbMeas1DInterval
-    % Class for probability measures with continuous piece-wise affine
-    % (CPWA) density function on a one-dimensional interval
+    % Class for probability measures with continuous piece-wise affine (CPWA) density function on a one-dimensional interval
 
     methods(Access = public)
         function obj = ProbMeas1DCPWADens(knots, dens_knots)
             % Constructor function
             % Inputs:
-            %   knots: vector containing knots in the CPWA density function
-            %   (must be in ascending order)
-            %   dens_knots: vector containing the density at each
-            %   knot (thus specifying the entire density function via
-            %   interpolation)
+            %   knots: vector containing knots in the CPWA density function (must be in ascending order)
+            %   dens_knots: vector containing the density at each knot (thus specifying the entire density function via interpolation)
 
             % call the superclass constructor to initialize the support
             obj@ProbMeas1DInterval(knots(1), knots(end));
 
-            assert(all(diff(knots) > 0), ...
-                'knots are not in ascending order');
+            assert(all(diff(knots) > 0), 'knots are not in ascending order');
 
             if any(dens_knots < 0)
                 error('the density is not non-negative');
             end
 
-            % evaluate the integral of the unnormalized density within each
-            % sub-interval
+            % evaluate the integral of the unnormalized density within each sub-interval
             knot_diff = diff(knots);
-            subint_integrals = (dens_knots(1:end - 1) ...
-                + dens_knots(2:end)) .* knot_diff / 2;
+            subint_integrals = (dens_knots(1:end - 1) + dens_knots(2:end)) .* knot_diff / 2;
 
             % calculate the normalizing constant and normalize the density
             norm_const = sum(subint_integrals);
@@ -43,12 +36,9 @@ classdef ProbMeas1DCPWADens < ProbMeas1DInterval
             obj.Dens.InvCDF = struct;
             obj.Dens.InvCDF.CDFKnots = [0; cumsum(subint_integrals)];
 
-            % coefficients in the quadratic equations required for
-            % computing the inverse CDF
-            obj.Dens.InvCDF.a = obj.Dens.KnotDiff ...
-                .* obj.Dens.KnotDensityDiff;
-            obj.Dens.InvCDF.b = obj.Dens.KnotDiff ...
-                .* obj.Dens.KnotDensities(1:end - 1);
+            % coefficients in the quadratic equations required for computing the inverse CDF
+            obj.Dens.InvCDF.a = obj.Dens.KnotDiff .* obj.Dens.KnotDensityDiff;
+            obj.Dens.InvCDF.b = obj.Dens.KnotDiff .* obj.Dens.KnotDensities(1:end - 1);
         end
 
         function dens = densityFunction(obj, x)
@@ -60,19 +50,15 @@ classdef ProbMeas1DCPWADens < ProbMeas1DInterval
 
             inside = obj.checkIfInsideSupport(x);
 
-            dens = (sum(min(max((x - obj.Dens.Knots(1:end - 1)') ...
-                ./ obj.Dens.KnotDiff', 0), 1) ...
-                .* obj.Dens.KnotDensityDiff', 2) ...
+            dens = (sum(min(max((x - obj.Dens.Knots(1:end - 1)') ./ obj.Dens.KnotDiff', 0), 1) .* obj.Dens.KnotDensityDiff', 2) ...
                 + obj.Dens.KnotDensities(1)) .* inside;
         end
 
         function x = evaluateInverseCDF(obj, probs, batch_size)
-            % Evaluate the inverse cumulative density function. Computation
-            % is done in batches if necessary.
+            % Evaluate the inverse cumulative density function. Computation is done in batches if necessary.
             % Inputs:
             %   probs: vector containing inputs (must be between 0 and 1)
-            %   batch_size: maximum number of inputs to be handled in the 
-            %   same batch (default is 1e4)
+            %   batch_size: maximum number of inputs to be handled in the same batch (default is 1e4)
             % Output:
             %   x: vector containing outputs
 
@@ -88,13 +74,10 @@ classdef ProbMeas1DCPWADens < ProbMeas1DInterval
             vals_cell = cell(batch_num, 1);
 
             for batch_id = 1:batch_num
-                probs_batch = probs(((batch_id - 1) ...
-                    * batch_size + 1):min(batch_id * batch_size, ...
-                    input_num));
+                probs_batch = probs(((batch_id - 1) * batch_size + 1):min(batch_id * batch_size, input_num));
 
                 % compute which sub-interval the input belongs to
-                int_id = min(sum(probs_batch - cdf_knots' >= 0, 2), ...
-                    knot_num - 1);
+                int_id = min(sum(probs_batch - cdf_knots' >= 0, 2), knot_num - 1);
 
                 % coefficients in the quadratic equations
                 a = obj.Dens.InvCDF.a(int_id);
@@ -104,25 +87,19 @@ classdef ProbMeas1DCPWADens < ProbMeas1DInterval
                 a_zero_list = abs(a) < 1e-8;
 
                 % apply the quadratic formula when a ~= 0
-                interp_weights = (sqrt(b .^ 2 + 2 * a ...
-                    .* (probs_batch - cdf_knots(int_id))) - b) ./ a;
+                interp_weights = (sqrt(b .^ 2 + 2 * a .* (probs_batch - cdf_knots(int_id))) - b) ./ a;
 
                 % apply the linear formula when a == 0
-                interp_weights(a_zero_list) = (probs_batch(a_zero_list) ...
-                    - cdf_knots(int_id(a_zero_list))) ...
-                    ./ b(a_zero_list);
+                interp_weights(a_zero_list) = (probs_batch(a_zero_list) - cdf_knots(int_id(a_zero_list))) ./ b(a_zero_list);
 
-                vals_cell{batch_id} = obj.Dens.Knots(int_id) ...
-                    + interp_weights .* obj.Dens.KnotDiff(int_id);
+                vals_cell{batch_id} = obj.Dens.Knots(int_id) + interp_weights .* obj.Dens.KnotDiff(int_id);
             end
 
-            x = min(max(vertcat(vals_cell{:}), obj.Supp.LowerBound), ...
-                obj.Supp.UpperBound);
+            x = min(max(vertcat(vals_cell{:}), obj.Supp.LowerBound), obj.Supp.UpperBound);
         end
 
         function cost = computeOTCost(obj)
-            % Compute the optimal transport cost to the coupled discrete
-            % measure
+            % Compute the optimal transport cost to the coupled discrete measure
             % Output:
             %   cost: the computed optimal transport cost
 
@@ -135,20 +112,17 @@ classdef ProbMeas1DCPWADens < ProbMeas1DInterval
             [sorted_atoms, sorted_order] = sort(atoms, 'ascend');
             sorted_probs = obj.OT.DiscMeas.Probs(sorted_order);
 
-            % compute intervals that are coupled with each atom by
-            % evaluating the inverse CDF
+            % compute intervals that are coupled with each atom by evaluating the inverse CDF
             itv_right = obj.evaluateInverseCDF(cumsum(sorted_probs));
             itv_left = [obj.Supp.LowerBound; itv_right(1:end - 1)];
             itv_right_dist = abs(itv_right - sorted_atoms);
             itv_left_dist = abs(itv_left - sorted_atoms);
             
-            % the point in the interval with the least distance to the atom
-            % in the discrete measure
+            % the point in the interval with the least distance to the atom in the discrete measure
             itv_center = max(min(sorted_atoms, itv_right), itv_left);
             itv_center_dist = abs(itv_center - sorted_atoms);
 
-            % the (discontinuous) piece-wise affine integrand function is
-            % described on each (possibly empty) interval
+            % the (discontinuous) piece-wise affine integrand function is described on each (possibly empty) interval
             pwalim_lb = [itv_left; itv_center];
             pwalim_ub = [itv_center; itv_right];
             pwalim_diff = pwalim_ub - pwalim_lb;
@@ -156,8 +130,7 @@ classdef ProbMeas1DCPWADens < ProbMeas1DInterval
             pwaval_ub = [itv_center_dist; itv_right_dist];
             pwaval_diff = pwaval_ub - pwaval_lb;
 
-            % when an interval has length 0 it will result in 0 division
-            % error; thus, we change the denominator to 1
+            % when an interval has length 0 it will result in 0 division error; thus, we change the denominator to 1
             pwalim_diff(pwalim_diff == 0) = 1;
             
             % prepare quantites used in the integration
@@ -179,9 +152,8 @@ classdef ProbMeas1DCPWADens < ProbMeas1DInterval
             T1 = pwaval_lb .* pwalim_ub - pwaval_ub .* pwalim_lb;
             T2 = (dens_lb .* pdfknots_ub - dens_ub .* pdfknots_lb)';
 
-            intval_mat = (dens_diff' .* pwaval_diff .* D3 / 3 ...
-                + (dens_diff' .* T1 + pwaval_diff .* T2) .* D2 / 2 ...
-                + T1 .* T2 .* D1) ./ pwalim_diff ./ pdfknots_diff';
+            intval_mat = (dens_diff' .* pwaval_diff .* D3 / 3 + (dens_diff' .* T1 + pwaval_diff .* T2) .* D2 / 2 + T1 .* T2 .* D1) ...
+                ./ pwalim_diff ./ pdfknots_diff';
 
             % sum up all integrals to compute the optimal transport cost
             cost = sum(sum(intval_mat));
@@ -191,15 +163,12 @@ classdef ProbMeas1DCPWADens < ProbMeas1DInterval
     methods(Access = protected)
     
         function integrals = integrateSimplicialTestFuncs(obj, knots)
-            % Compute the integrals of the test functions with respect to
-            % the probability measure 
+            % Compute the integrals of the test functions with respect to the probability measure 
             % Input: 
-            %   knots: vector containing the knots in the simplicial test
-            %   functions
+            %   knots: vector containing the knots in the simplicial test functions
             % Output:
-            %   integrals: vector containing integrals of the test
-            %   functions with respect to the probability measure; the
-            %   number of test functions is equal to the number of knots
+            %   integrals: vector containing integrals of the test functions with respect to the probability measure; the number of 
+            %   test functions is equal to the number of knots
             
             densities = obj.Dens.KnotDensities;
             density_diff = obj.Dens.KnotDensityDiff;
@@ -207,23 +176,18 @@ classdef ProbMeas1DCPWADens < ProbMeas1DInterval
             density_knot_diff = diff(density_knots);
             knot_diff = diff(knots);
 
-            % intersection of sub-intervals in the simplicial cover and
-            % sub-intervals in the density function
+            % intersection of sub-intervals in the simplicial cover and sub-intervals in the density function
             int_lb = max(knots(1:end - 1), density_knots(1:end - 1)');
             int_ub = max(min(knots(2:end), density_knots(2:end)'), int_lb);
 
             D3 = int_ub .^ 3 - int_lb .^ 3;
             D2 = int_ub .^ 2 - int_lb .^ 2;
             D1 = int_ub - int_lb;
-            T1 = densities(1:end - 1) .* density_knots(2:end) ...
-                - densities(2:end) .* density_knots(1:end - 1);
+            T1 = densities(1:end - 1) .* density_knots(2:end) - densities(2:end) .* density_knots(1:end - 1);
 
-            int_integrals1 = (density_diff' .* D3 / 3 ...
-                + (T1' - density_diff' .* knots(1:end - 1)) ...
-                .* D2 / 2 - knots(1:end - 1) .* T1' .* D1) ...
-                ./ density_knot_diff' ./ knot_diff;
-            int_integrals_tot = (density_diff' .* D2 / 2 + T1' .* D1) ...
-                ./ density_knot_diff';
+            int_integrals1 = (density_diff' .* D3 / 3 + (T1' - density_diff' .* knots(1:end - 1)) ...
+                .* D2 / 2 - knots(1:end - 1) .* T1' .* D1) ./ density_knot_diff' ./ knot_diff;
+            int_integrals_tot = (density_diff' .* D2 / 2 + T1' .* D1) ./ density_knot_diff';
 
             right_integrals = sum(int_integrals1, 2);
             left_integrals = sum(int_integrals_tot, 2) - right_integrals;

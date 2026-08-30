@@ -39,7 +39,7 @@ prob_min = min(probs_agg);
 dens_max = max(max(vertcat(cont_densi{:})));
 
 figure('Position', [100, 100, 1350, 550]);
-ha = tight_subplot(2, test_num, [0.035, 0.012], [0.065, 0.004], [0.012, 0.004]);
+ha = tight_subplot(2, test_num, [0.035, 0.012], [0.067, 0.004], [0.012, 0.004]);
 theo_sparsity = inf(test_num, 1);
 
 for test_id = 1:test_num
@@ -92,7 +92,7 @@ for test_id = 1:test_num
 
     quality_testfuncs_num = size(quality_testfuncs_cell{test_id}{1}, 1) - 1;
     theo_sparsity(test_id) = theo_sparsity(test_id) + quality_testfuncs_num + 2;
-    xlabel(sprintf('$n=%d$', marg_testfuncs_num_sum + marg_num * (quality_testfuncs_num + 1)), ...
+    xlabel(sprintf('$q=%d$', marg_testfuncs_num_sum + marg_num * (quality_testfuncs_num + 1)), ...
         'FontSize', 18, 'Interpreter', 'latex');
 
     fprintf(['test %d: theoretical sparsity = %d, ' 'actual sparsity = %d\n'], ...

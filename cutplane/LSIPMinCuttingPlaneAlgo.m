@@ -77,6 +77,53 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
             obj.GlobalOptions = gl_opt;
         end
 
+        function updateOptions(obj, opt, LP_opt, gl_opt)
+            % Update the options
+            % Inputs:
+            %   opt: struct containing the options for the cutting-plane algorithm
+            %   LP_opt: struct for storing the additional options for the gurobi linear programming (LP) solver
+            %   gl_opt: struct for storing the options for the global optimization oracle
+
+            if exist('opt', 'var') && ~isempty(opt)
+                options = obj.Options;
+
+                opt_fields = fieldnames(opt);
+                opt_values = struct2cell(opt);
+    
+                for fid = 1:length(opt_fields)
+                    options.(opt_fields{fid}) = opt_values{fid};
+                end
+
+                obj.Options = options;
+            end
+
+            if exist('LP_opt', 'var') && ~isempty(LP_opt)
+                LP_options = obj.LPOptions;
+
+                opt_fields = fieldnames(LP_opt);
+                opt_values = struct2cell(LP_opt);
+    
+                for fid = 1:length(opt_fields)
+                    LP_options.(opt_fields{fid}) = opt_values{fid};
+                end
+
+                obj.LPOptions = LP_options;
+            end
+
+            if exist('gl_opt', 'var') && ~isempty(gl_opt)
+                global_options = obj.GlobalOptions;
+
+                opt_fields = fieldnames(gl_opt);
+                opt_values = struct2cell(gl_opt);
+    
+                for fid = 1:length(opt_fields)
+                    global_options.(opt_fields{fid}) = opt_values{fid};
+                end
+
+                obj.GlobalOptions = global_options;
+            end
+        end
+
         function output = run(obj, init_constr, tolerance, load_from_file)
             % Run the cutting-plane algorithm for linear semi-infinite programming. The computed primal and dual solutions as well as 
             % the upper and lower bounds will be stored in the runtime environment afterwards.
@@ -221,7 +268,7 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
                 end
 
                 % check the termination criterion here
-                if obj.Runtime.LSIP_UB - obj.Runtime.LSIP_LB <= tolerance
+                if obj.checkTerminationCondition(tolerance, min_lb, optimizers)
                     break;
                 end
 
@@ -268,18 +315,6 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
             % set this flag to indicate that the cutting-plane algorithm has finished execution
             obj.Runtime.Finished = true;
 
-            % stop the timer
-            total_time = total_time + toc(total_timer);
-
-            % prepare additional outputs
-            output = struct;
-
-            output.total_time = total_time;
-            output.iter = obj.Runtime.iter;
-            output.LP_time = LP_time;
-            output.global_time = global_time;
-            output.time_limit_exceeded = time_limit_exceeded;
-
             % close the log file
             if ~isempty(obj.Options.log_file)
                 fprintf(log_file, '--- cutting-plane algorithm ends ---\n\n');
@@ -287,6 +322,17 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
             end
 
             obj.cleanUpRuntimeAfterRun();
+
+            % prepare additional outputs
+            output = struct;
+            output.iter = obj.Runtime.iter;
+            output.LP_time = LP_time;
+            output.global_time = global_time;
+            output.time_limit_exceeded = time_limit_exceeded;
+
+            % stop the timer
+            total_time = total_time + toc(total_timer);
+            output.total_time = total_time;
         end
     end
 
@@ -309,6 +355,11 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
             if isfield(result, 'vbasis') && ~isempty(result.vbasis) && isfield(result, 'cbasis') && ~isempty(result.cbasis)
                 obj.Runtime.vbasis = result.vbasis;
                 obj.Runtime.cbasis = result.cbasis;
+            else
+                % if warm-start basis information is unavailable from the result, remove these basis to avoid future solvers using
+                % stale basis
+                obj.Runtime.vbasis = [];
+                obj.Runtime.cbasis = [];
             end
         end
 
@@ -337,6 +388,18 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
                 obj.Runtime.LSIP_UB - obj.Runtime.LSIP_LB);
         end
 
+        function terminate = checkTerminationCondition(obj, tolerance, min_lb, optimizers) %#ok<INUSD>
+            % Check whether to terminate the cutting-plane algorithm
+            % Inputs:
+            %   tolerance: user-specified tolerance value
+            %   min_lb: lower bound computed by the global optimization solver
+            %   optimizers: computed approximate global optimizers
+            % Output:
+            %   terminate: boolean value indicating whether to terminate the cutting-plane algorithm
+
+            terminate = obj.Runtime.LSIP_UB - obj.Runtime.LSIP_LB <= tolerance;
+        end
+
         function LP_options_runtime_new = handleLPErrors(obj, LP_result, LP_options_runtime, LP_trial_num) %#ok<INUSD>
             % Handle numerical errors that occurred while solving LP
             % Inputs: 
@@ -351,10 +414,10 @@ classdef (Abstract) LSIPMinCuttingPlaneAlgo < handle
             if LP_trial_num == 1
                 % if the LP solver has failed once (reaching the time limit without converging), retry after  setting higher numeric 
                 % focus, turning off presolve, and removing the existing bases
-                LP_options_runtime.TimeLimit = LP_options_runtime.TimeLimit * 2;
-                LP_options_runtime.NumericFocus = 3;
-                LP_options_runtime.Quad = 1;
-                LP_options_runtime.Presolve = 0;
+                LP_options_runtime_new.TimeLimit = LP_options_runtime.TimeLimit * 2;
+                LP_options_runtime_new.NumericFocus = 3;
+                LP_options_runtime_new.Quad = 1;
+                LP_options_runtime_new.Presolve = 0;
 
                 if isfield(obj.Runtime.CurrentLPModel, 'cbasis')
                     obj.Runtime.CurrentLPModel = rmfield(obj.Runtime.CurrentLPModel, 'cbasis');

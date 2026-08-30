@@ -1,4 +1,4 @@
-% Compute semi-discrete optimal transport of each marginal
+% Compute the upper bound
 
 CONFIG = BizLoc_config();
 

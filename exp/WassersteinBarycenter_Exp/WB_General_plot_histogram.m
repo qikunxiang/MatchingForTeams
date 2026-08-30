@@ -21,7 +21,7 @@ end
 
 
 figure('Position', [0, 100, 1500, 255]);
-ha = tight_subplot(1, test_num, [0, 0.018], [0.125, 0.010], [0.013, 0.0035]);
+ha = tight_subplot(1, test_num, [0, 0.018], [0.131, 0.010], [0.013, 0.0035]);
 
 
 for test_id = 1:test_num
@@ -43,5 +43,5 @@ for test_id = 1:test_num
     set(gca, 'XLim', x_axis_lim);
     set(gca, 'YLim', y_axis_lim);
 
-    xlabel(sprintf('$n=%d$', decivar_num_list(test_id)), 'Interpreter', 'latex', 'FontSize', 15);
+    xlabel(sprintf('$q=%d$', decivar_num_list(test_id)), 'Interpreter', 'latex', 'FontSize', 15);
 end

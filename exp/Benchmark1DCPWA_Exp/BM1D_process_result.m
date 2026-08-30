@@ -1,9 +1,9 @@
 CONFIG = BM1D_config();
 
 trial_num = 10;
-marg_list = [4; 6; 8; 10; 12; 14; 16; 18; 20; 50; 80; 100];
+marg_list = [4, 8, 16, 32, 64, 128, 1000];
 
-marg_testfunc_num_mat = zeros(trial_num, 100);
+marg_testfunc_num_mat = zeros(trial_num, 1000);
 quality_testfunc_num_list = zeros(trial_num, 1);
 for trial_id = 1:trial_num
     input_file_path = sprintf(CONFIG.SAVEPATH_INPUTS, trial_id);
@@ -37,7 +37,7 @@ for marg_test_id = 1:marg_test_num
         result_file_path = sprintf(CONFIG.SAVEPATH_OUTPUTS, trial_id, marg_num);
 
         if exist(result_file_path, 'file')
-            result_file = load(result_file_path, 'MT_LB', 'LSIP_dual', 'MT_diff_mean', 'MT_THEB', 'output');
+            result_file = load(result_file_path, 'MT_LB', 'MT_diff_mean', 'MT_THEB', 'MT_sparsity', 'output');
         
             RST.ERR(marg_test_id, trial_id) = result_file.MT_diff_mean;
             RST.RELERR(marg_test_id, trial_id) = result_file.MT_diff_mean / abs(result_file.MT_LB);
@@ -46,7 +46,7 @@ for marg_test_id = 1:marg_test_num
             RST.LPTIME(marg_test_id, trial_id) = result_file.output.LP_time;
             RST.GLTIME(marg_test_id, trial_id) = result_file.output.global_time;
             RST.ITER(marg_test_id, trial_id) = result_file.output.iter;
-            RST.SPAR(marg_test_id, trial_id) = length(result_file.LSIP_dual{1}.Probabilities);
+            RST.SPAR(marg_test_id, trial_id) = result_file.MT_sparsity;
             RST.THSPAR(marg_test_id, trial_id) = min(marg_testfunc_num_mat(trial_id, 1:marg_num) - 1) ...
                 + quality_testfunc_num_list(trial_id) - 1 + 2;
         end

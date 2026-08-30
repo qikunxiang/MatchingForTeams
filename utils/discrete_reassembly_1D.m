@@ -108,5 +108,8 @@ for marg_id = 1:marg_num
     new_coup_probs = glued_probs(1:glued_counter);
 end
 
+[new_coup_atom_indices, ~, umap] = unique(new_coup_atom_indices, 'rows', 'stable');
+new_coup_probs = accumarray(umap, new_coup_probs, [size(new_coup_atom_indices, 1), 1]);
+
 end
 

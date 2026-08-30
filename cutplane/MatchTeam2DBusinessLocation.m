@@ -878,6 +878,36 @@ classdef MatchTeam2DBusinessLocation < LSIPMinCuttingPlaneAlgo
             vals = vertcat(vals_cell{:});
             inside = vertcat(inside_cell{:});
         end
+
+        function vals = evaluateWeightedSumOfQualitySimplicialTestFuncs(obj, pts, coefficients, batch_size)
+            % Evaluate a weighted sum of simplicial test functions at given locations; the input locations must be inside the support 
+            % of the measure 
+            % Input:
+            %   pts: two-column matrix containing the input points
+            %   coefficients: vector containing the coefficients of the test functions in the weighted sum
+            %   batch_size: maximum number of inputs to be evaluated together via a vectorized routine (default is 1e4)
+            % Output:
+            %   vals: sparse matrix containing the computed function values where each row corresponds to an input and each column
+            %   corresponds to a test function
+
+            if ~exist('batch_size', 'var') || isempty(batch_size)
+                batch_size = 1e4;
+            end
+
+            assert(all(obj.checkIfInsideQualitySpace(pts)), 'some points are not inside the support');
+
+            input_num = size(pts, 1);
+            batch_num = ceil(input_num / batch_size);
+            vals_cell = cell(batch_num, 1);
+
+            for batch_id = 1:batch_num
+                [raw_vals, ~] = obj.doEvaluateQualitySimplicialTestFuncs( ...
+                    pts(((batch_id - 1) * batch_size + 1):min(batch_id * batch_size, input_num), :));
+                vals_cell{batch_id} = raw_vals * coefficients;
+            end
+
+            vals = vertcat(vals_cell{:});
+        end
         
         function coup_cell = updateSimplicialTestFuncs(obj, ...
                 quality_args, args_cell, fixed_index)
@@ -1827,10 +1857,46 @@ classdef MatchTeam2DBusinessLocation < LSIPMinCuttingPlaneAlgo
                 + primal_sol.Constant;
         end
 
-        function vals_mat = evaluateOptTransferFuncs(obj, pts, ref_pt)
+        function vals_mat = evaluateOptTransferFuncs(obj, pts, batch_size)
             % Evaluate the transfer functions resulted from optimized
             % parametric functions. These transfer functions is part of
             % approximate matching equilibria. 
+            % Inputs:
+            %   pts: two-column matrix containing the input points as rows
+            %   batch_size: the maximum number of input points to be
+            %   handled at the same time in the vectorized procedure
+            %   (default is 1e4)
+            % Output:
+            %   vals_mat: matrix where each column contains the computed
+            %   transfer function corresponding to a marginal at the input
+            %   points
+
+            if ~isfield(obj.Runtime, 'PrimalSolution') ...
+                    || isempty(obj.Runtime.PrimalSolution)
+                error('need to first execute the cutting-plane algorithm');
+            end
+
+            if ~exist('batch_size', 'var') || isempty(batch_size)
+                batch_size = 1e4;
+            end
+
+            marg_num = length(obj.Marginals);
+            pt_num = size(pts, 1);
+            vals_mat = zeros(pt_num, marg_num);
+
+            for marg_id = 1:marg_num
+                primal_sol = obj.Runtime.PrimalSolution{marg_id};
+                vals_mat(:, marg_id) = obj.evaluateWeightedSumOfQualitySimplicialTestFuncs( ...
+                    pts, primal_sol.TransFuncCoefficients, batch_size);
+            end
+        end
+
+        function vals_mat = evaluateLegacyOptTransferFuncs(obj, pts, ref_pt)
+            % Evaluate the transfer functions resulted from optimized
+            % parametric functions. These transfer functions is part of
+            % approximate matching equilibria. 
+            % This is the legacy option which uses the c_i-transform of the
+            % parametric functions.
             % Inputs:
             %   pts: two-column matrix containing the input points as rows
             %   ref_pt: vector indicating a reference point where the 
@@ -4286,7 +4352,7 @@ classdef MatchTeam2DBusinessLocation < LSIPMinCuttingPlaneAlgo
                 primal_sol{marg_id} = struct;
                 primal_sol{marg_id}.Constant = ...
                     vec(obj.Storage.DeciVarInterceptIndices(marg_id)) ...
-                    - obj.Runtime.GlobalMin.MinVals(marg_id);
+                    + obj.Runtime.GlobalMin.MinVals(marg_id);
 
                 % add back the first test function for the marginal
                 primal_sol{marg_id}.Coefficients = [0; ...

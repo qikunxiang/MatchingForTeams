@@ -3058,7 +3058,7 @@ classdef MatchTeam2DWassersteinBarycenter < LSIPMinCuttingPlaneAlgo
 
                 if ~obj.Options.sparse_parametrization
                     primal_sol{marg_id}.Constant = vec(obj.Storage.DeciVarInterceptIndices(marg_id)) ...
-                        - obj.Runtime.GlobalMin.MinVals(marg_id);
+                        + obj.Runtime.GlobalMin.MinVals(marg_id);
     
                     % add back the first test function for the marginal
                     primal_sol{marg_id}.Coefficients = [0; vec(obj.Storage.DeciVarMargTestFuncIndices{marg_id})];
