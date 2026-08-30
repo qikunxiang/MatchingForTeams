@@ -105,7 +105,7 @@
 		% root folder for all log files
 		CONFIG.LOGPATH_ROOT = '~/Logs/';
 
-## Experiment: business location distribution problem
+## Experiment: retail business problem
 
 + All the relevant scripts used in this experiment are located in **exp/BusinessLocation\_Exp/**.
 
@@ -136,7 +136,7 @@
 
 + Run **BizLoc\_plot\_transfuncs.m** to plot the computed approximately optimal transfer functions.
 
-## Experiment: 2-Wasserstein barycenter
+## Experiment: 2-Wasserstein barycenter of general measures
 
 + All the relevant files used in this experiment are located in **exp/WassersteinBarycenter_Exp/**.
 
@@ -249,9 +249,15 @@ The configuration is identical to the **Experiment: 2-Wasserstein barycenter** s
 + Run **BM1D\_prepare.m** to generate files containing the problem instances as well as the test functions used in the approximation schemes.
 
 ### Step 2: approximate the matching for teams problems
-+ Run **BM1D\_run.m** to approximate the problem instances via the parametric formulation based approach. 
++ Run **BM1D\_run.m** to approximate the problem instances with 4, 8, 16, 32, 64, and 128 agent populations via the parametric formulation based approach. 
 
-### Step 3: visualize the results
+### Step 3: approximate the matching for teams problems in the case with 1000 agent populations
++ Run **BM1D\_run\_M1000.m** to approximate the problem instances with 1000 agent populations via the parametric formulation based approach; note that the following statement on Line 82 controls the number of parallel processes used when solving the MIP problems via Gurobi (by default we use 10 parallel processes).
+
+		parpool(10);
+
+
+### Step 4: print the results
 + Run **BM1D\_process\_results.m** to compile all results into a single data file.
 
 + Run **BM1D\_print\_results.m** to print a table containing the computed sub-optimality estimates, the running time, and the sparsity of support. 
