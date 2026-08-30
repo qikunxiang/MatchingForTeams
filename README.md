@@ -10,7 +10,7 @@
 
 	- **MatchTeam1DCPWA.m**: class for the matching for teams problem with one-dimensional type spaces
 
-	- **MatchTeam2DBusinessLocation.m**: class for the business location problem with two-dimensional type spaces and two-dimensional quality space
+	- **MatchTeam2DBusinessLocation.m**: class for the retail business problem with two-dimensional type spaces and two-dimensional quality space
 
 	- **MatchTeam2DWassersteinBarycenter.m**: class for the 2-Wasserstein barycenter problem with two-dimensional input measures solved via the parametric formulation based approach
 
@@ -66,7 +66,7 @@
         - **test\_mesh\_intersect\_power\_diagram.cpp**: C++ code for testing the function mesh\_intersect\_power\_diagram
 
 + **exp/** contains the scripts to run the numerical experiments (see below for detailed instructions)
-	- **BusinessLocation\_EXP/**: contains all the relevant scripts used for the business location distribution experiment
+	- **BusinessLocation\_EXP/**: contains all the relevant scripts used for the retail business experiment
 
 	- **WassersteinBarycenter\_Exp/**: contains all the relevant scripts for the 2-Wasserstein barycenter experiment with general input measures
 
@@ -110,7 +110,7 @@
 + All the relevant scripts used in this experiment are located in **exp/BusinessLocation\_Exp/**.
 
 ### Step 1: generate the input file
-+ Run **BizLoc\_prepare.m** to generate a file containing the setting of the business location distribution problem as well as the test functions used in the approximation schemes.
++ Run **BizLoc\_prepare.m** to generate a file containing the setting of the retail business problem as well as the test functions used in the approximation schemes.
 
 + Run **BizLoc\_plot\_density.m** to plot the density functions of the input measures. 
 
